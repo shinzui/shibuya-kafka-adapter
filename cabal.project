@@ -1,0 +1,30 @@
+packages:
+  shibuya-kafka-adapter
+  shibuya-kafka-adapter-jitsurei
+
+-- Local dependencies
+packages:
+  /Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya/shibuya-core
+  /Users/shinzui/Keikaku/bokuno/libraries/haskell/kafka-effectful
+  /Users/shinzui/Keikaku/hub/haskell/hw-kafka-client-project/hw-kafka-client
+
+-- hs-opentelemetry from GitHub (required by shibuya-core)
+source-repository-package
+  type: git
+  location: https://github.com/iand675/hs-opentelemetry
+  tag: adc464b0a45e56a983fa1441be6e432b50c29e0e
+  subdir: api
+
+source-repository-package
+  type: git
+  location: https://github.com/iand675/hs-opentelemetry
+  tag: adc464b0a45e56a983fa1441be6e432b50c29e0e
+  subdir: propagators/w3c
+
+-- Allow newer for GHC 9.12 boot library compatibility
+allow-newer:
+  proto-lens:base,
+  proto-lens:ghc-prim,
+  proto-lens-runtime:base,
+  proto-lens-protobuf-types:base,
+  proto-lens-protobuf-types:ghc-prim

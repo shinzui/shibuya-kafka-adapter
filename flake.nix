@@ -16,7 +16,7 @@
         formatter = treefmtEval.config.build.wrapper;
 
         # Feature flags
-        withProcessCompose = false;
+        withProcessCompose = true;
         withPostgresql = false;
       in
       {
@@ -40,6 +40,7 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.zlib
+            pkgs.rdkafka
             pkgs.just
             pkgs.cabal-install
             pkgs.pkg-config

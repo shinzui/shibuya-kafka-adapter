@@ -1,0 +1,65 @@
+cabal-version: 3.12
+name:          shibuya-kafka-adapter-jitsurei
+version:       0.1.0.0
+synopsis:      Runnable examples for shibuya-kafka-adapter
+description:
+  Extensive runnable examples demonstrating real-world usage patterns
+  for shibuya-kafka-adapter: multi-topic consumption, graceful shutdown,
+  offset management, and multi-partition processing.
+
+author:        Nadeem Bitar
+maintainer:    nadeem@gmail.com
+license:       MIT
+build-type:    Simple
+category:      Concurrency, Streaming
+
+common warnings
+  ghc-options: -Wall
+
+common common-deps
+  build-depends:
+    , base                   ^>=4.21.0.0
+    , bytestring
+    , effectful-core
+    , hw-kafka-client
+    , kafka-effectful
+    , shibuya-core
+    , shibuya-kafka-adapter
+    , text
+
+  default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    DuplicateRecordFields
+    LambdaCase
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+    QuasiQuotes
+
+  default-language:   GHC2024
+
+executable basic-consumer
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        BasicConsumer.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+
+executable multi-topic
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        MultiTopic.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+
+executable offset-management
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        OffsetManagement.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+
+executable multi-partition
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        MultiPartition.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
