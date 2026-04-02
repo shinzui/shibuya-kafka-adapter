@@ -41,11 +41,11 @@ processing -- serving as both documentation and a validation harness.
 - [x] Unit test conversion functions in main package test suite (pure tests, no broker needed) (2026-04-02)
 
 ### Milestone 3: Core adapter implementation
-- [ ] Implement `kafkaSource` polling stream in `Internal.hs`
-- [ ] Implement `mkAckHandle` for Kafka offset commit semantics
-- [ ] Implement `kafkaAdapter` constructor in `Shibuya.Adapter.Kafka`
-- [ ] Implement shutdown logic (consumer close + offset flush)
-- [ ] Verify compilation with `cabal build all`
+- [x] Implement `kafkaSource` polling stream in `Internal.hs` (2026-04-02)
+- [x] Implement `mkAckHandle` for Kafka offset commit semantics (2026-04-02)
+- [x] Implement `kafkaAdapter` constructor in `Shibuya.Adapter.Kafka` (2026-04-02)
+- [x] Implement shutdown logic (consumer close + offset flush) (2026-04-02)
+- [x] Verify compilation with `cabal build all` (2026-04-02)
 
 ### Milestone 4: Integration tests (main package test suite)
 - [ ] Implement `Kafka.TestEnv` with broker setup, topic helpers, effectful integration
