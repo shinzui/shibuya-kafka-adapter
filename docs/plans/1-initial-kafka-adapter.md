@@ -36,9 +36,9 @@ processing -- serving as both documentation and a validation harness.
 - [x] Verify `cabal build all` compiles the skeleton (2026-04-02)
 
 ### Milestone 2: Configuration and type conversion
-- [ ] Implement `Shibuya.Adapter.Kafka.Config` with `KafkaAdapterConfig` and related types
-- [ ] Implement `Shibuya.Adapter.Kafka.Convert` mapping `ConsumerRecord` to `Envelope`
-- [ ] Unit test conversion functions in main package test suite (pure tests, no broker needed)
+- [x] Implement `Shibuya.Adapter.Kafka.Config` with `KafkaAdapterConfig` and related types (2026-04-02)
+- [x] Implement `Shibuya.Adapter.Kafka.Convert` mapping `ConsumerRecord` to `Envelope` (2026-04-02)
+- [x] Unit test conversion functions in main package test suite (pure tests, no broker needed) (2026-04-02)
 
 ### Milestone 3: Core adapter implementation
 - [ ] Implement `kafkaSource` polling stream in `Internal.hs`
