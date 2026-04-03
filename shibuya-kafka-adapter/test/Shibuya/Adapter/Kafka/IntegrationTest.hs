@@ -9,7 +9,7 @@ import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Effectful (runEff)
 import Effectful.Error.Static (runError)
-import Kafka.Consumer.Types (OffsetCommit (..), OffsetReset (..))
+import Kafka.Consumer.Types (OffsetReset (..))
 import Kafka.Effectful.Consumer (
     brokersList,
     groupId,

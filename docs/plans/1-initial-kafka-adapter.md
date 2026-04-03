@@ -111,7 +111,20 @@ processing -- serving as both documentation and a validation harness.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+### Completed (2026-04-02)
+
+All 5 milestones implemented:
+
+- **Library** (`shibuya-kafka-adapter`): 4 modules — `Config`, `Convert`, `Internal`, `Kafka` — implementing `kafkaAdapter` that produces a `Adapter es (Maybe ByteString)` from a `KafkaAdapterConfig`.
+- **Pure tests**: 16 conversion tests pass (messageId, cursor, partition, timestamp, trace headers).
+- **Integration tests**: 5 tests written (basic produce-consume, offset commit, multi-partition, batch polling, graceful shutdown). Require Redpanda broker to run.
+- **Examples** (`shibuya-kafka-adapter-jitsurei`): 4 executables — `basic-consumer`, `multi-topic`, `offset-management`, `multi-partition`.
+
+### Remaining
+
+- Integration tests and examples need to be validated against a running Redpanda broker (`process-compose up`).
+- `cabal-version: 3.14` is not supported by the installed `cabal-fmt`; downgraded to `3.12`.
+- Record dot syntax (e.g., `adapter.source`) does not work across package boundaries for types defined with `NoFieldSelectors`; explicit pattern matching is required.
 
 
 ## Context and Orientation

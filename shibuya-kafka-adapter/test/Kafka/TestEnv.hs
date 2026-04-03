@@ -26,7 +26,7 @@ import Effectful (Eff, IOE, runEff, (:>))
 import Effectful.Error.Static (Error, runError)
 import Kafka.Consumer.ConsumerProperties (ConsumerProperties)
 import Kafka.Consumer.Subscription (Subscription)
-import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetReset (..))
+import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), OffsetReset (..))
 import Kafka.Effectful.Consumer (
     KafkaConsumer,
     brokersList,
