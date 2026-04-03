@@ -23,8 +23,11 @@ common common-deps
     , effectful-core
     , hw-kafka-client
     , kafka-effectful
+    , process
     , shibuya-core
     , shibuya-kafka-adapter
+    , streamly
+    , streamly-core
     , text
 
   default-extensions:

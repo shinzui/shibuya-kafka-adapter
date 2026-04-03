@@ -57,10 +57,10 @@ processing -- serving as both documentation and a validation harness.
 - [ ] Run full test suite against rpk-managed Redpanda: `process-compose up` then `cabal test`
 
 ### Milestone 5: Jitsurei examples
-- [ ] Implement `basic-consumer` example: single-topic consume-and-print
-- [ ] Implement `multi-topic` example: multiple adapters under `runApp` with supervision
-- [ ] Implement `offset-management` example: demonstrate manual offset control and restart behavior
-- [ ] Implement `multi-partition` example: partition-aware processing with keyed messages
+- [x] Implement `basic-consumer` example: single-topic consume-and-print (2026-04-02)
+- [x] Implement `multi-topic` example: two adapters under independent consumer sessions (2026-04-02)
+- [x] Implement `offset-management` example: demonstrate offset commit lifecycle and restart behavior (2026-04-02)
+- [x] Implement `multi-partition` example: partition-aware processing with keyed messages (2026-04-02)
 - [ ] Verify all examples run against rpk-managed Redpanda
 
 
