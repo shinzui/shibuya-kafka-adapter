@@ -1,5 +1,6 @@
 module Shibuya.Adapter.Kafka.IntegrationTest (tests) where
 
+import Control.Monad (forM)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS8
@@ -18,6 +19,7 @@ import Kafka.Effectful.Consumer (
     runKafkaConsumer,
     topics,
  )
+import Kafka.Effectful.Consumer.Effect (pollMessageBatch)
 import Kafka.TestEnv (
     TestEnv (..),
     consumeN,
@@ -70,8 +72,10 @@ testBasicProduceConsume = withTestEnv $ \env -> do
     assertEqual "payloads" (map Just payloads) receivedPayloads
 
     -- Verify messageId format: topic-partition-offset
-    let Envelope{messageId = MessageId firstIdText} : _ = envelopes
-    assertBool "messageId contains topic" (Text.isPrefixOf (unTopicName env.testTopic) firstIdText)
+    case envelopes of
+        (Envelope{messageId = MessageId firstIdText} : _) ->
+            assertBool "messageId contains topic" (Text.isPrefixOf (unTopicName env.testTopic) firstIdText)
+        [] -> error "unreachable: already verified 5 envelopes"
 
     -- Verify cursor is populated
     assertBool "cursor is Just" (all (\(Envelope{cursor}) -> case cursor of Just (CursorInt _) -> True; _ -> False) envelopes)
@@ -89,30 +93,19 @@ testOffsetCommit = withTestEnv $ \env -> do
     _ <- consumeN env 3 AckOk
 
     -- Create new consumer in same group - should get no messages
-    ref <- newIORef (0 :: Int)
     result <- runEff . runError @KafkaError $ do
         let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
             sub = topics [env.testTopic] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            let config =
-                    KafkaAdapterConfig
-                        { topics = [env.testTopic]
-                        , pollTimeout = Timeout 3000
-                        , batchSize = BatchSize 100
-                        , offsetReset = Earliest
-                        }
-            Adapter{source} <- kafkaAdapter config
-            -- Try to consume with a short timeout - should get 0 messages
-            Stream.fold Fold.drain
-                $ Stream.mapM
-                    (\_ -> liftIO $ modifyIORef' ref (+ 1))
-                $ Stream.take 1
-                $ Stream.takeWhile (\_ -> False) source
+            -- Poll a few times to allow group join + rebalance, verify no re-delivery
+            allResults <- forM [1 .. 3 :: Int] $ \_ -> do
+                results <- pollMessageBatch (Timeout 3000) (BatchSize 100)
+                pure [cr | Right cr <- results]
+            let totalMessages = concat allResults
+            liftIO $ assertEqual "no re-delivery" 0 (length totalMessages)
     case result of
         Left err -> error $ "Failed: " <> show err
         Right () -> pure ()
-    count <- readIORef ref
-    assertEqual "no re-delivery" 0 count
 
 testMultiPartition :: IO ()
 testMultiPartition = withTestEnv $ \env -> do

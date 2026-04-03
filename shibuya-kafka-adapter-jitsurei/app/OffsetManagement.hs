@@ -10,10 +10,9 @@ Usage:
 -}
 module Main (main) where
 
-import Control.Monad (forM_)
+import Control.Monad (forM, forM_)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString.Char8 qualified as BS8
-import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TIO
 import Effectful (runEff)
@@ -31,6 +30,7 @@ import Kafka.Effectful.Consumer (
     runKafkaConsumer,
     topics,
  )
+import Kafka.Effectful.Consumer.Effect (pollMessageBatch)
 import Kafka.Effectful.Producer (
     flushProducer,
     produceMessage,
@@ -40,7 +40,7 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Producer.Types (ProducePartition (..), ProducerRecord (..))
 import Kafka.Types (BatchSize (..), Timeout (..))
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), defaultConfig, kafkaAdapter)
+import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
@@ -100,30 +100,22 @@ main = do
         Left err -> error $ "First consume failed: " <> show err
         Right () -> pure ()
 
-    -- Step 3: Restart consumer in same group
+    -- Step 3: Restart consumer in same group, verify no re-delivery
     TIO.putStrLn "[offset-management] Restarting consumer (second pass)..."
-    ref <- newIORef (0 :: Int)
     result3 <- runEff . runError @KafkaError $ do
         let props = brokersList [broker] <> groupId grp <> noAutoOffsetStore
             sub = topics [topic] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            let config =
-                    (defaultConfig [topic])
-                        { pollTimeout = Timeout 3000
-                        , batchSize = BatchSize 100
-                        }
-            Adapter{source} <- kafkaAdapter config
-            Stream.fold Fold.drain
-                $ Stream.mapM
-                    (\_ -> liftIO $ modifyIORef' ref (+ 1))
-                $ Stream.take 1
-                $ Stream.takeWhile (\_ -> False) source
+            -- Poll a few times to allow group join + rebalance
+            allResults <- forM [1 .. 3 :: Int] $ \_ -> do
+                results <- pollMessageBatch (Timeout 3000) (BatchSize 100)
+                pure [cr | Right cr <- results]
+            let count = length (concat allResults)
+            liftIO $ do
+                TIO.putStrLn $ "[offset-management] Re-delivered messages: " <> Text.pack (show count)
+                if count == 0
+                    then TIO.putStrLn "[offset-management] SUCCESS: No re-delivery after offset commit."
+                    else TIO.putStrLn "[offset-management] UNEXPECTED: Messages were re-delivered!"
     case result3 of
         Left err -> error $ "Second consume failed: " <> show err
         Right () -> pure ()
-
-    count <- readIORef ref
-    TIO.putStrLn $ "[offset-management] Re-delivered messages: " <> Text.pack (show count)
-    if count == 0
-        then TIO.putStrLn "[offset-management] SUCCESS: No re-delivery after offset commit."
-        else TIO.putStrLn "[offset-management] UNEXPECTED: Messages were re-delivered!"

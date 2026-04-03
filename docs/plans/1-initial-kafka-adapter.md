@@ -54,20 +54,23 @@ processing -- serving as both documentation and a validation harness.
 - [x] Test: multi-partition message distribution and partition field population (2026-04-02)
 - [x] Test: batch polling efficiency (2026-04-02)
 - [x] Test: graceful shutdown (adapter.shutdown stops stream, flushes offsets) (2026-04-02)
-- [ ] Run full test suite against rpk-managed Redpanda: `process-compose up` then `cabal test`
+- [x] Run full test suite against rpk-managed Redpanda: `process-compose up` then `cabal test` (2026-04-02)
 
 ### Milestone 5: Jitsurei examples
 - [x] Implement `basic-consumer` example: single-topic consume-and-print (2026-04-02)
 - [x] Implement `multi-topic` example: two adapters under independent consumer sessions (2026-04-02)
 - [x] Implement `offset-management` example: demonstrate offset commit lifecycle and restart behavior (2026-04-02)
 - [x] Implement `multi-partition` example: partition-aware processing with keyed messages (2026-04-02)
-- [ ] Verify all examples run against rpk-managed Redpanda
+- [x] Verify all examples run against rpk-managed Redpanda (2026-04-02)
 
 
 ## Surprises & Discoveries
 
 - `cabal.project` needed absolute paths for local dependencies (shibuya-core, kafka-effectful, hw-kafka-client) and `source-repository-package` stanzas for hs-opentelemetry (transitive dependency of shibuya-core). Date: 2026-04-02.
 - Record dot syntax (`adapter.source`, `ingested.ack.finalize`) doesn't work across package boundaries for types defined with `NoFieldSelectors`. Use explicit record pattern matching (`Adapter{source}`, `Ingested{envelope, ack = AckHandle finalize}`) instead. Date: 2026-04-02.
+- `kafkaSource` produces an infinite stream via `repeatM pollBatch`. When all offsets are committed and no new messages exist, the stream never yields elements — causing `takeWhile`/`take`-based termination patterns to hang. The offset-commit test and offset-management example were fixed to use direct `pollMessageBatch` calls instead of the adapter stream for the "verify no re-delivery" step. Date: 2026-04-02.
+- rdkafka logs IPv6 connection-refused warnings (`Connect to ipv6#[::1]:9092 failed`) when the broker only listens on IPv4. These are benign — rdkafka falls back to IPv4 automatically. Date: 2026-04-02.
+- `rpk container start` requires a free port 8080 for the Redpanda Console. Use `--console-port` flag to pick an alternate port when 8080 is in use. Date: 2026-04-02.
 
 
 ## Decision Log
@@ -120,9 +123,20 @@ All 5 milestones implemented:
 - **Integration tests**: 5 tests written (basic produce-consume, offset commit, multi-partition, batch polling, graceful shutdown). Require Redpanda broker to run.
 - **Examples** (`shibuya-kafka-adapter-jitsurei`): 4 executables — `basic-consumer`, `multi-topic`, `offset-management`, `multi-partition`.
 
-### Remaining
+### Validated (2026-04-02)
 
-- Integration tests and examples need to be validated against a running Redpanda broker (`process-compose up`).
+All milestones fully validated against a live Redpanda broker (via `rpk container start` + colima):
+
+- **Full test suite**: 21/21 tests pass (`cabal test shibuya-kafka-adapter`): 16 pure conversion tests + 5 integration tests (basic produce-consume 10.8s, offset commit 20.3s, multi-partition 10.8s, batch polling 10.8s, graceful shutdown 10.8s).
+- **Examples**: `multi-partition`, `offset-management`, and `multi-topic` all run to completion with correct output. `basic-consumer` runs as an infinite consumer loop (by design).
+
+### Fixes during validation
+
+- Fixed incomplete pattern match warning in `IntegrationTest.hs:73` (replaced partial `let` binding with exhaustive `case`).
+- Fixed hanging offset-commit test and offset-management example: `kafkaSource`'s infinite polling loop never yields elements when all offsets are committed, so `takeWhile (\_ -> False)` hangs. Replaced with direct `pollMessageBatch` calls for the "verify no re-delivery" step.
+
+### Notes
+
 - `cabal-version: 3.14` is not supported by the installed `cabal-fmt`; downgraded to `3.12`.
 - Record dot syntax (e.g., `adapter.source`) does not work across package boundaries for types defined with `NoFieldSelectors`; explicit pattern matching is required.
 
