@@ -1,0 +1,8 @@
+Name,Mean (ps),2*Stdev (ps)
+All.ConsumerRecord to Envelope.with trace headers,553027,45318
+All.ConsumerRecord to Envelope.without trace headers,490744,32806
+All.Trace header extraction.both headers,43378,2628
+All.Trace header extraction.traceparent only,27850,1780
+All.Trace header extraction.no trace headers,8962,508
+All.Timestamp conversion.CreateTime,382991,33912
+All.Timestamp conversion.NoTimestamp,2197,206
