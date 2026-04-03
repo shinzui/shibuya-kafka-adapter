@@ -1,0 +1,47 @@
+cabal-version: 3.12
+name:          shibuya-kafka-adapter-bench
+version:       0.1.0.0
+synopsis:      Benchmarks for shibuya-kafka-adapter conversion functions
+description:
+  Micro-benchmarks for the pure conversion hot path in shibuya-kafka-adapter:
+  ConsumerRecord to Envelope conversion, W3C trace header extraction,
+  and timestamp conversion.
+
+author:        Nadeem Bitar
+maintainer:    nadeem@gmail.com
+license:       MIT
+build-type:    Simple
+category:      Concurrency, Streaming
+
+common warnings
+  ghc-options: -Wall
+
+benchmark shibuya-kafka-adapter-bench
+  import:             warnings
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+  hs-source-dirs:     bench
+  default-language:   GHC2024
+  ghc-options:
+    -Wno-orphans -rtsopts -with-rtsopts=-A32m -fproc-alignment=64
+
+  default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    DuplicateRecordFields
+    LambdaCase
+    NoFieldSelectors
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+    QuasiQuotes
+    StandaloneDeriving
+
+  build-depends:
+    , base                   ^>=4.21.0.0
+    , bytestring             ^>=0.12
+    , deepseq
+    , hw-kafka-client        >=5.3       && <6
+    , shibuya-core           ^>=0.1.0.0
+    , shibuya-kafka-adapter
+    , tasty-bench

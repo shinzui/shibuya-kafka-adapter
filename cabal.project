@@ -1,12 +1,14 @@
 packages:
   shibuya-kafka-adapter
   shibuya-kafka-adapter-jitsurei
+  shibuya-kafka-adapter-bench
 
 -- Local dependencies
 packages:
   /Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya/shibuya-core
   /Users/shinzui/Keikaku/bokuno/libraries/haskell/kafka-effectful
   /Users/shinzui/Keikaku/hub/haskell/hw-kafka-client-project/hw-kafka-client
+  /Users/shinzui/Keikaku/hub/haskell/tasty-bench-project/tasty-bench
 
 -- hs-opentelemetry from GitHub (required by shibuya-core)
 source-repository-package
