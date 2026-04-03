@@ -48,12 +48,12 @@ processing -- serving as both documentation and a validation harness.
 - [x] Verify compilation with `cabal build all` (2026-04-02)
 
 ### Milestone 4: Integration tests (main package test suite)
-- [ ] Implement `Kafka.TestEnv` with broker setup, topic helpers, effectful integration
-- [ ] Test: basic produce-then-consume via adapter stream
-- [ ] Test: offset commit verification (consume, ack, restart, verify no re-delivery)
-- [ ] Test: multi-partition message distribution and partition field population
-- [ ] Test: batch polling efficiency
-- [ ] Test: graceful shutdown (adapter.shutdown stops stream, flushes offsets)
+- [x] Implement `Kafka.TestEnv` with broker setup, topic helpers, effectful integration (2026-04-02)
+- [x] Test: basic produce-then-consume via adapter stream (2026-04-02)
+- [x] Test: offset commit verification (consume, ack, restart, verify no re-delivery) (2026-04-02)
+- [x] Test: multi-partition message distribution and partition field population (2026-04-02)
+- [x] Test: batch polling efficiency (2026-04-02)
+- [x] Test: graceful shutdown (adapter.shutdown stops stream, flushes offsets) (2026-04-02)
 - [ ] Run full test suite against rpk-managed Redpanda: `process-compose up` then `cabal test`
 
 ### Milestone 5: Jitsurei examples
@@ -67,6 +67,7 @@ processing -- serving as both documentation and a validation harness.
 ## Surprises & Discoveries
 
 - `cabal.project` needed absolute paths for local dependencies (shibuya-core, kafka-effectful, hw-kafka-client) and `source-repository-package` stanzas for hs-opentelemetry (transitive dependency of shibuya-core). Date: 2026-04-02.
+- Record dot syntax (`adapter.source`, `ingested.ack.finalize`) doesn't work across package boundaries for types defined with `NoFieldSelectors`. Use explicit record pattern matching (`Adapter{source}`, `Ingested{envelope, ack = AckHandle finalize}`) instead. Date: 2026-04-02.
 
 
 ## Decision Log
