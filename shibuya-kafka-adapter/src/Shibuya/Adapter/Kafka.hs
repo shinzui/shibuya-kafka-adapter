@@ -81,7 +81,12 @@ kafkaAdapter ::
 kafkaAdapter config = do
     shutdownVar <- liftIO $ newTVarIO False
     let messageSource =
-            Stream.mapM (pure . mkIngested) (kafkaSource config)
+            Stream.mapMaybeM
+                ( \case
+                    Right cr -> pure (Just (mkIngested cr))
+                    Left _err -> pure Nothing
+                )
+                (kafkaSource config)
     pure
         Adapter
             { adapterName = "kafka:" <> Text.intercalate "," (map unTopicName config.topics)

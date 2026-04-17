@@ -24,6 +24,7 @@ import Kafka.Effectful.Consumer.Effect (
     pollMessageBatch,
     storeOffsetMessage,
  )
+import Kafka.Streamly.Source (skipNonFatal)
 import Kafka.Types (KafkaError)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
@@ -35,20 +36,22 @@ import Streamly.Data.Stream qualified as Stream
 
 {- | Create a stream of 'ConsumerRecord's by repeatedly polling the broker.
 
-Calls 'pollMessageBatch' in a loop, filtering out @Left@ (error) entries
-and flattening batches into individual records.
+Calls 'pollMessageBatch' in a loop, preserving errors as @Left@ values.
+Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
+'skipNonFatal' from hw-kafka-streamly. Fatal errors are preserved for
+upstream handling.
 -}
 kafkaSource ::
     (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
     KafkaAdapterConfig ->
-    Stream (Eff es) (ConsumerRecord (Maybe ByteString) (Maybe ByteString))
+    Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
 kafkaSource config =
-    Stream.repeatM pollBatch
-        & Stream.concatMap Stream.fromList
+    skipNonFatal $
+        Stream.repeatM pollBatch
+            & Stream.concatMap Stream.fromList
   where
-    pollBatch = do
-        results <- pollMessageBatch config.pollTimeout config.batchSize
-        pure [cr | Right cr <- results]
+    pollBatch =
+        pollMessageBatch config.pollTimeout config.batchSize
 
 {- | Create an 'AckHandle' for a single 'ConsumerRecord'.
 

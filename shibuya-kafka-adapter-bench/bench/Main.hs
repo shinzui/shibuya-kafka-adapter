@@ -4,15 +4,19 @@ module Main (main) where
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
+import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (..))
-import Kafka.Types (Headers, Millis (..), PartitionId (..), TopicName (..), headersFromList)
+import Kafka.Streamly.Source (isFatal, skipNonFatal)
+import Kafka.Types (Headers, KafkaError (..), Millis (..), PartitionId (..), TopicName (..), headersFromList)
 import Shibuya.Adapter.Kafka.Convert (
     consumerRecordToEnvelope,
     extractTraceHeaders,
     timestampToUTCTime,
  )
 import Shibuya.Core.Types (Cursor, Envelope, MessageId)
-import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, nf)
+import Streamly.Data.Fold qualified as Fold
+import Streamly.Data.Stream qualified as Stream
+import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, nf, nfIO)
 
 -- Orphan NFData instances for shibuya-core types (derive via Generic)
 deriving anyclass instance NFData MessageId
@@ -83,12 +87,32 @@ createTimestamp = CreateTime (Millis 1712150400000)
 noTimestamp :: Timestamp
 noTimestamp = NoTimestamp
 
+-- Sample error values for isFatal benchmarks
+fatalError :: KafkaError
+fatalError = KafkaResponseError RdKafkaRespErrSsl
+
+nonFatalTimeout :: KafkaError
+nonFatalTimeout = KafkaResponseError RdKafkaRespErrTimedOut
+
+nonFatalEOF :: KafkaError
+nonFatalEOF = KafkaResponseError RdKafkaRespErrPartitionEof
+
+-- | Generate a list of Either values: 95% Right (records), 5% Left (non-fatal timeouts).
+mkEitherStream :: Int -> [Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString))]
+mkEitherStream n =
+    [ if i `mod` 20 == 0
+        then Left nonFatalTimeout
+        else Right sampleRecordWithHeaders
+    | i <- [1 .. n]
+    ]
+
 main :: IO ()
 main =
     defaultMain
         [ envelopeBenchmarks
         , traceHeaderBenchmarks
         , timestampBenchmarks
+        , streamPipelineBenchmarks
         ]
 
 envelopeBenchmarks :: Benchmark
@@ -115,3 +139,51 @@ timestampBenchmarks =
         [ bench "CreateTime" $ nf timestampToUTCTime createTimestamp
         , bench "NoTimestamp" $ nf timestampToUTCTime noTimestamp
         ]
+
+streamPipelineBenchmarks :: Benchmark
+streamPipelineBenchmarks =
+    bgroup
+        "Stream pipeline"
+        [ bgroup
+            "isFatal classification"
+            [ bench "fatal error (SSL)" $ nf isFatal fatalError
+            , bench "non-fatal (timeout)" $ nf isFatal nonFatalTimeout
+            , bench "non-fatal (partition EOF)" $ nf isFatal nonFatalEOF
+            ]
+        , bgroup
+            "skipNonFatal"
+            [ bench "10k elements (95% Right)" $
+                nfIO $
+                    Stream.fold Fold.length $
+                        skipNonFatal $
+                            Stream.fromList eitherList10k
+            , bench "10k elements baseline (no filter)" $
+                nfIO $
+                    Stream.fold Fold.length $
+                        Stream.fromList eitherList10k
+            ]
+        , bgroup
+            "mapMaybeM extraction"
+            [ bench "10k elements (new path: mapMaybeM)" $
+                nfIO $
+                    Stream.fold Fold.length $
+                        Stream.mapMaybeM
+                            ( \case
+                                Right cr -> pure (Just cr)
+                                Left _ -> pure Nothing
+                            )
+                            (Stream.fromList eitherList10k)
+            , bench "10k elements (old path: mapM)" $
+                nfIO $
+                    Stream.fold Fold.length $
+                        Stream.mapM pure $
+                            Stream.fromList bareList10k
+            ]
+        , bench "Stream drain baseline (10k Int)" $
+            nfIO $
+                Stream.fold Fold.length $
+                    Stream.fromList [1 :: Int .. 10000]
+        ]
+  where
+    eitherList10k = mkEitherStream 10000
+    bareList10k = replicate 10000 sampleRecordWithHeaders

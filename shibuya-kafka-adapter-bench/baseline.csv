@@ -1,8 +1,16 @@
 Name,Mean (ps),2*Stdev (ps)
-All.ConsumerRecord to Envelope.with trace headers,553027,45318
-All.ConsumerRecord to Envelope.without trace headers,490744,32806
-All.Trace header extraction.both headers,43378,2628
-All.Trace header extraction.traceparent only,27850,1780
-All.Trace header extraction.no trace headers,8962,508
-All.Timestamp conversion.CreateTime,382991,33912
-All.Timestamp conversion.NoTimestamp,2197,206
+All.ConsumerRecord to Envelope.with trace headers,575202,56572
+All.ConsumerRecord to Envelope.without trace headers,529343,30032
+All.Trace header extraction.both headers,46459,3752
+All.Trace header extraction.traceparent only,29515,1714
+All.Trace header extraction.no trace headers,9592,896
+All.Timestamp conversion.CreateTime,413652,27816
+All.Timestamp conversion.NoTimestamp,2596,204
+All.Stream pipeline.isFatal classification.fatal error (SSL),3303,306
+All.Stream pipeline.isFatal classification.non-fatal (timeout),3450,164
+All.Stream pipeline.isFatal classification.non-fatal (partition EOF),3421,256
+All.Stream pipeline.skipNonFatal.10k elements (95% Right),38555590,1859822
+All.Stream pipeline.skipNonFatal.10k elements baseline (no filter),26425054,2232574
+All.Stream pipeline.mapMaybeM extraction.10k elements (new path: mapMaybeM),38313354,3618324
+All.Stream pipeline.mapMaybeM extraction.10k elements (old path: mapM),26303088,1935650
+All.Stream pipeline.Stream drain baseline (10k Int),26418872,2005308

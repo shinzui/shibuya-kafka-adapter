@@ -42,6 +42,9 @@ benchmark shibuya-kafka-adapter-bench
     , bytestring             ^>=0.12
     , deepseq
     , hw-kafka-client        >=5.3       && <6
+    , hw-kafka-streamly      ^>=0.1
     , shibuya-core           ^>=0.1.0.0
     , shibuya-kafka-adapter
+    , streamly               ^>=0.11
+    , streamly-core          ^>=0.3
     , tasty-bench
