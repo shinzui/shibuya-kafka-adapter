@@ -1,17 +1,17 @@
 let Schema =
-      https://raw.githubusercontent.com/shinzui/mori-schema/8415b4b8a746a84eecf982f0f1d7194368bf7b54/package.dhall
-        sha256:d19ae156d6c357d982a1aea0f1b6ba1f01d76d2d848545b150db75ed4c39a8a9
+      https://raw.githubusercontent.com/shinzui/mori-schema/ad9960dd3dd3b33eadd45f17bcf430b0e1ec13bc/package.dhall
+        sha256:83aa1432e98db5da81afde4ab2057dcab7ce4b2e883d0bc7f16c7d25b917dd0c
 
 let emptyRuntime = { deployable = False, exposesApi = False }
 
 let emptyDeps = [] : List Schema.Dependency
 
-let emptyDocs = [] : List Schema.DocRef
+let emptyDocs = [] : List Schema.DocRef.Type
 
-let emptyConfig = [] : List Schema.ConfigItem
+let emptyConfig = [] : List Schema.ConfigItem.Type
 
-in  { project =
-      { name = "shibuya-kafka-adapter"
+in  Schema.Project::{ project =
+      Schema.ProjectIdentity::{ name = "shibuya-kafka-adapter"
       , namespace = "shinzui"
       , type = Schema.PackageType.Library
       , description = Some
@@ -20,27 +20,21 @@ in  { project =
       , lifecycle = Schema.Lifecycle.Active
       , domains = [ "concurrency", "queue-processing", "kafka" ]
       , owners = [ "shinzui" ]
-      , origin = Schema.Origin.Own
       }
     , repos =
-      [ { name = "shibuya-kafka-adapter"
+      [ Schema.Repo::{ name = "shibuya-kafka-adapter"
         , github = Some "shinzui/shibuya-kafka-adapter"
-        , gitlab = None Text
-        , git = None Text
         , localPath = Some "."
         }
       ]
     , packages =
-      [ { name = "shibuya-kafka-adapter"
+      [ Schema.Package::{ name = "shibuya-kafka-adapter"
         , type = Schema.PackageType.Library
         , language = Schema.Language.Haskell
         , path = Some "shibuya-kafka-adapter"
         , description = Some
             "Kafka adapter with polling, offset commit semantics, partition awareness, and graceful shutdown"
-        , lifecycle = None Schema.Lifecycle
-        , visibility = Schema.Visibility.Public
         , runtime = emptyRuntime
-        , runtimeEnvironment = None Schema.RuntimeEnvironment
         , dependencies =
           [ Schema.Dependency.ByName "effectful/effectful"
           , Schema.Dependency.ByName "shinzui/kafka-effectful"
@@ -50,42 +44,34 @@ in  { project =
           ]
         , docs = emptyDocs
         , config = emptyConfig
-        , apiSource = None Schema.ApiSource
         }
-      , { name = "shibuya-kafka-adapter-bench"
+      , Schema.Package::{ name = "shibuya-kafka-adapter-bench"
         , type = Schema.PackageType.Other "Benchmark"
         , language = Schema.Language.Haskell
         , path = Some "shibuya-kafka-adapter-bench"
         , description = Some
             "Micro-benchmarks for conversion hot path: ConsumerRecord to Envelope, W3C header extraction, timestamps"
-        , lifecycle = None Schema.Lifecycle
         , visibility = Schema.Visibility.Internal
         , runtime = emptyRuntime
-        , runtimeEnvironment = None Schema.RuntimeEnvironment
         , dependencies =
           [ Schema.Dependency.ByName "Bodigrim/tasty-bench"
           ]
         , docs = emptyDocs
         , config = emptyConfig
-        , apiSource = None Schema.ApiSource
         }
-      , { name = "shibuya-kafka-adapter-jitsurei"
+      , Schema.Package::{ name = "shibuya-kafka-adapter-jitsurei"
         , type = Schema.PackageType.Application
         , language = Schema.Language.Haskell
         , path = Some "shibuya-kafka-adapter-jitsurei"
         , description = Some
             "Runnable examples: basic consumer, multi-topic, offset management, multi-partition"
-        , lifecycle = None Schema.Lifecycle
         , visibility = Schema.Visibility.Internal
         , runtime = { deployable = True, exposesApi = False }
-        , runtimeEnvironment = None Schema.RuntimeEnvironment
         , dependencies = emptyDeps
         , docs = emptyDocs
         , config = emptyConfig
-        , apiSource = None Schema.ApiSource
         }
       ]
-    , bundles = [] : List Schema.PackageBundle
     , dependencies =
       [ "shinzui/shibuya"
       , "effectful/effectful"
@@ -96,9 +82,8 @@ in  { project =
       , "Bodigrim/tasty-bench"
       , "iand675/hs-opentelemetry"
       ]
-    , apis = [] : List Schema.Api
     , agents =
-      [ { role = "adapter-dev"
+      [ Schema.AgentHint::{ role = "adapter-dev"
         , description = Some
             "Kafka adapter development: polling, conversion, offset semantics"
         , includePaths =
@@ -112,7 +97,7 @@ in  { project =
           [ "shibuya-kafka-adapter"
           ]
         }
-      , { role = "bench-dev"
+      , Schema.AgentHint::{ role = "bench-dev"
         , description = Some
             "Benchmark development: conversion micro-benchmarks and regression baselines"
         , includePaths =
@@ -125,7 +110,7 @@ in  { project =
           [ "shibuya-kafka-adapter-bench"
           ]
         }
-      , { role = "examples-dev"
+      , Schema.AgentHint::{ role = "examples-dev"
         , description = Some
             "Jitsurei examples: usage patterns for Kafka adapter"
         , includePaths =
@@ -139,11 +124,8 @@ in  { project =
           ]
         }
       ]
-    , skills = [] : List Schema.Skill
-    , subagents = [] : List Schema.Subagent
-    , standards = [] : List Text
     , docs =
-      [ { key = "plans"
+      [ Schema.DocRef::{ key = "plans"
         , kind = Schema.DocKind.Reference
         , audience = Schema.DocAudience.Internal
         , description = Some "Execution plans for adapter development"
