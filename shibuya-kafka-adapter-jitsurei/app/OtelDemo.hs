@@ -23,6 +23,7 @@ module Main (main) where
 
 import Control.Exception (bracket)
 import Control.Monad.IO.Class (liftIO)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TIO
@@ -72,22 +73,37 @@ import Shibuya.Telemetry.Semantic (
  )
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
+import System.Environment (getArgs, lookupEnv)
+import Text.Read (readMaybe)
 
 topicName :: Text
 topicName = "orders"
 
-messagesToProcess :: Int
-messagesToProcess = 1
+defaultMessagesToProcess :: Int
+defaultMessagesToProcess = 1
+
+defaultGroupId :: Text
+defaultGroupId = "otel-demo-group"
 
 main :: IO ()
 main = do
-    TIO.putStrLn "[otel-demo] Starting (consumes 1 message then exits)..."
+    args <- getArgs
+    let messagesToProcess = fromMaybe defaultMessagesToProcess $ case args of
+            (n : _) -> readMaybe n
+            _ -> Nothing
+    cgId <- maybe defaultGroupId Text.pack <$> lookupEnv "OTEL_DEMO_GROUP"
+    TIO.putStrLn $
+        "[otel-demo] Starting (consumes "
+            <> Text.pack (show messagesToProcess)
+            <> " message(s); group="
+            <> cgId
+            <> ")..."
     bracket initializeGlobalTracerProvider shutdownTracerProvider $ \provider -> do
         let tracer = makeTracer provider "shibuya-kafka-adapter-jitsurei" tracerOptions
         result <- runEff . runError @KafkaError . runTracing tracer $ do
             let props =
                     brokersList [BrokerAddress "localhost:9092"]
-                        <> groupId (ConsumerGroupId "otel-demo-group")
+                        <> groupId (ConsumerGroupId cgId)
                         <> noAutoOffsetStore
                 sub = topics [TopicName topicName] <> offsetReset Earliest
             runKafkaConsumer props sub $ do

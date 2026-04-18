@@ -151,10 +151,21 @@ Observable outcomes at completion:
       tags. The new record produced with
       `traceparent=00-1c00...abcd-2a00...abcdef-01` shows up in Jaeger
       with the correct CHILD_OF reference.
-- [ ] Milestone 4: producer-side spike — wrap an outgoing `produceMessage` call
-      (either via the upstream `produceMessage` wrapper or via a tiny in-repo
-      helper built on `Shibuya.Telemetry.Propagation.injectTraceContext`) and
-      verify `traceparent` arrives on the consumer side.
+- [x] Milestone 4 (2026-04-18): `otel-producer-demo` lives at
+      `shibuya-kafka-adapter-jitsurei/app/OtelProducerDemo.hs`. Produces
+      twice — once via the upstream `produceMessage` wrapper, once via a
+      DIY helper composed from `withSpan' Producer` +
+      `injectTraceContext` + raw `Kafka.Producer.produceMessage`. Both
+      records carried `traceparent` (verified via
+      `rpk topic consume orders --num 4`). `otel-demo` was made
+      args/env-driven (`cabal run otel-demo -- 4` with
+      `OTEL_DEMO_GROUP=...`) so the four records could be re-consumed under
+      a fresh group; the resulting Jaeger traces show end-to-end
+      producer→consumer linkage:
+      trace `6d635cd6...` = `otel-producer-demo:send orders` (Producer)
+      with `otel-demo:shibuya.process.message` as `CHILD_OF` it; trace
+      `bffdcec4...` = `otel-producer-demo:shibuya.send.message` (Producer,
+      DIY) with `otel-demo:shibuya.process.message` as `CHILD_OF` it.
 - [ ] Milestone 5: gap analysis and recommendation, written into Outcomes &
       Retrospective below.
 - [ ] Milestone 6 (conditional, only if Milestone 5 recommends Adopt or Extend):
@@ -268,6 +279,40 @@ Observable outcomes at completion:
   poll. Same noise documented in Plan 7's retrospective; the upstream
   probe shows it more clearly because it does not suppress librdkafka
   logs.
+
+### Milestone 4 (2026-04-18)
+
+- **Both producer paths inject `traceparent` correctly; both produce
+  spans of kind=Producer.** `rpk topic consume orders --num 4` returns
+  the upstream-wrapper record carrying
+  `traceparent=00-6d635cd6...c0ccca3546c44686-797d7e20235d6b0c-01`
+  and the DIY record carrying
+  `traceparent=00-bffdcec479dc281c2aa5cdae0ca83292-adc2786907910ffa-01`,
+  both with an empty `tracestate`. Producer span attributes differ
+  exactly the way the consumer spans did (M2 vs M3 table above):
+  upstream `send orders` has `messaging.operation = send` and
+  `messaging.kafka.message.key = upstream-key`; DIY
+  `shibuya.send.message` has `messaging.system = kafka` and
+  `messaging.destination.name = orders` (whatever the spike author
+  passed to `addAttribute`). The DIY path requires the caller to pick a
+  span name, set kind=Producer in `SpanArguments`, and add every
+  attribute by hand — the upstream wrapper does all three from the
+  `ProducerRecord` automatically.
+- **End-to-end propagation verified across services.** Jaeger trace
+  `6d635cd6bf6ac903c0ccca3546c44686` contains exactly two spans:
+  `otel-producer-demo:send orders` (root, Producer) and
+  `otel-demo:shibuya.process.message` (Consumer, CHILD_OF the root).
+  Trace `bffdcec479dc281c2aa5cdae0ca83292` is the symmetric DIY case:
+  `otel-producer-demo:shibuya.send.message` (root, Producer) and
+  `otel-demo:shibuya.process.message` (Consumer, CHILD_OF the root).
+  This is the strongest single piece of evidence in the investigation —
+  it shows that whichever producer-side option is chosen, Shibuya's
+  consumer-side `extractTraceContext` already closes the loop.
+- **`otel-demo` was extended to read its message count from
+  `argv[0]` and its consumer group from `OTEL_DEMO_GROUP`.** Default
+  behaviour (consume 1 message under group `otel-demo-group`) is
+  preserved. The change made M4's verification ergonomic without
+  forking a copy of `otel-demo` for the spike.
 
 
 ## Decision Log
