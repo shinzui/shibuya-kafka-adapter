@@ -126,10 +126,20 @@ Observable outcomes at completion:
       brings up Redpanda + Jaeger; `curl http://localhost:16686/` → 200;
       `curl POST http://localhost:4318/v1/traces` → 200. The handle exporter
       was dropped from scope (see Decision Log + Surprises).
-- [ ] Milestone 2: `otel-demo` jitsurei example — the **real adapter path**
-      driven through `runTracing`, with `withExtractedContext` using
-      `Envelope.traceContext`. Produce a message with a `traceparent`, observe
-      the child span.
+- [x] Milestone 2 (2026-04-18): `otel-demo` jitsurei executable lives at
+      `shibuya-kafka-adapter-jitsurei/app/OtelDemo.hs`. It drives
+      `kafkaAdapter` under `runTracing`, calls `extractTraceContext` on the
+      envelope's `traceContext`, and wraps the ack in
+      `withExtractedContext` + `withSpan' processMessageSpanName
+      consumerSpanArgs`. Produced a record carrying
+      `traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01`,
+      ran the demo, and confirmed (a) the printed child `traceId` matches
+      `0af7651916cd43dd8448eb211c80319c` and (b) Jaeger received a span with
+      the correct `CHILD_OF b7ad6b7169203331` reference and
+      `messaging.{system,destination.name,destination.partition.id,message.id}`
+      tags. Required adding `hs-opentelemetry-api ^>=0.3` as a direct
+      build-dep (transitive presence wasn't enough to import
+      `OpenTelemetry.Trace.Core` for `getSpanContext`).
 - [ ] Milestone 3: `otel-upstream-probe` jitsurei example — the upstream
       wrappers directly over raw `hw-kafka-client`, to compare span shape and
       header handling with Milestone 2.
@@ -168,6 +178,44 @@ Observable outcomes at completion:
   and the full `crypton-*` / `tls-2.4.1` chain as transitive deps of the
   OTLP exporter.** No conflicts with shibuya-core's existing closure; first
   build took roughly two minutes on a cold cache.
+
+### Milestone 2 (2026-04-18)
+
+- **`hs-opentelemetry-api` had to be declared explicitly even though it is
+  transitively present.** `OpenTelemetry.Trace.Core` is exported by
+  `hs-opentelemetry-api`, not the SDK; importing it for `getSpanContext`
+  failed with `GHC-87110: It is a member of the hidden package
+  hs-opentelemetry-api-0.3.1.0` until I added the dep. Plan rationale for
+  *not* declaring it (avoid bounds clash) is wrong: the SDK pins
+  `hs-opentelemetry-api >=0.3 && <0.4`, which matches `shibuya-core`
+  exactly, so an explicit `^>=0.3` is safe. Updated the cabal file and the
+  plan's Interfaces section accordingly.
+- **Default OTel service name was `unknown_service:otel-demo`, not the
+  tracer name `shibuya-kafka-adapter-jitsurei`.** The SDK's
+  `detectService` falls back to the executable name when
+  `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` are unset; `makeTracer
+  provider "name" tracerOptions` only affects `otel.scope.name`, not
+  `service.name`. Jaeger queries therefore go through
+  `service=unknown_service:otel-demo` (or `OTEL_SERVICE_NAME=...` can be
+  exported before running).
+- **Verified end-to-end propagation.** Producer header
+  `traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01` →
+  `Envelope.traceContext` → `extractTraceContext` →
+  `withExtractedContext` → child span. Jaeger trace
+  `0af7651916cd43dd8448eb211c80319c` has one span:
+
+      operationName: shibuya.process.message
+      kind:          consumer
+      duration:      142µs
+      references:    CHILD_OF 0af7651916cd43dd8448eb211c80319c/b7ad6b7169203331
+      tags:          messaging.system=kafka
+                     messaging.destination.name=orders
+                     messaging.destination.partition.id=0
+                     messaging.message.id=orders-0-0
+                     otel.scope.name=shibuya-kafka-adapter-jitsurei
+                     span.kind=consumer
+
+  This is the **baseline** that Milestones 3 and 4 are compared against.
 
 
 ## Decision Log

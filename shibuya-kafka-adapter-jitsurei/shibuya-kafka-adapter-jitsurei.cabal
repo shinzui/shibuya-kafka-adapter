@@ -34,6 +34,7 @@ common common-deps
     , base                                              ^>=4.21.0.0
     , bytestring
     , effectful-core
+    , hs-opentelemetry-api                              ^>=0.3
     , hs-opentelemetry-exporter-otlp                    ^>=0.1
     , hs-opentelemetry-instrumentation-hw-kafka-client  ^>=0.1
     , hs-opentelemetry-sdk                              ^>=0.1
@@ -89,3 +90,9 @@ executable fatal-error-demo
   main-is:        FatalErrorDemo.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:  containers
+
+executable otel-demo
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        OtelDemo.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
