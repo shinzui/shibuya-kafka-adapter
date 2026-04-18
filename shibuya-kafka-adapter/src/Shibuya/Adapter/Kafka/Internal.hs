@@ -4,6 +4,7 @@ This module is not part of the public API and may change without notice.
 module Shibuya.Adapter.Kafka.Internal (
     -- * Stream Construction
     kafkaSource,
+    ingestedStream,
 
     -- * Ingested Construction
     mkIngested,
@@ -16,7 +17,7 @@ where
 import Data.ByteString (ByteString)
 import Data.Function ((&))
 import Effectful (Eff, IOE, (:>))
-import Effectful.Error.Static (Error)
+import Effectful.Error.Static (Error, throwError)
 import Kafka.Consumer.Types (ConsumerRecord (..))
 import Kafka.Effectful.Consumer.Effect (
     KafkaConsumer,
@@ -42,7 +43,7 @@ Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
 upstream handling.
 -}
 kafkaSource ::
-    (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
+    (KafkaConsumer :> es, IOE :> es) =>
     KafkaAdapterConfig ->
     Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
 kafkaSource config =
@@ -90,3 +91,25 @@ mkIngested cr =
         , ack = mkAckHandle cr
         , lease = Nothing
         }
+
+{- | Transform a poll stream of @Either KafkaError ConsumerRecord@ into a
+stream of 'Ingested'.
+
+A @Right cr@ is wrapped via the supplied builder (in production,
+'mkIngested'). A @Left err@ that reaches this stage is fatal by construction
+— 'Kafka.Streamly.Source.skipNonFatal' has already dropped non-fatal errors
+— and is thrown via the 'Error' @KafkaError@ effect, terminating the stream.
+
+Parameterizing over the builder function keeps this helper free of the
+'KafkaConsumer' constraint, so it can be exercised in a unit test that
+injects a synthetic @Left@ without standing up a real consumer.
+-}
+ingestedStream ::
+    (Error KafkaError :> es) =>
+    (ConsumerRecord (Maybe ByteString) (Maybe ByteString) -> Ingested es (Maybe ByteString)) ->
+    Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString))) ->
+    Stream (Eff es) (Ingested es (Maybe ByteString))
+ingestedStream mkI =
+    Stream.mapMaybeM $ \case
+        Right cr -> pure (Just (mkI cr))
+        Left err -> throwError err

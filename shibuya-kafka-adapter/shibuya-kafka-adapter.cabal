@@ -34,8 +34,8 @@ library
     Shibuya.Adapter.Kafka
     Shibuya.Adapter.Kafka.Config
     Shibuya.Adapter.Kafka.Convert
+    Shibuya.Adapter.Kafka.Internal
 
-  other-modules:      Shibuya.Adapter.Kafka.Internal
   default-extensions:
     DeriveAnyClass
     DerivingStrategies
@@ -85,6 +85,7 @@ test-suite shibuya-kafka-adapter-test
 
   other-modules:
     Kafka.TestEnv
+    Shibuya.Adapter.Kafka.AdapterTest
     Shibuya.Adapter.Kafka.ConvertTest
     Shibuya.Adapter.Kafka.IntegrationTest
 
