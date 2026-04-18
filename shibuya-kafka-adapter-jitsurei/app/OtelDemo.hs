@@ -1,11 +1,12 @@
-{- | Adapter + Shibuya Tracing spike (Plan 8 Milestone 2).
+{- | Adapter + Shibuya Tracing demo, using the in-repo `traced` transformer.
 
-Drives the real 'kafkaAdapter' under Shibuya's @runTracing@ effect. For each
-ingested envelope, calls 'extractTraceContext' on the carried
-@traceparent@/@tracestate@ headers, opens a child span via
-'withExtractedContext' + 'withSpan'', and prints the span's trace and span
-ids so they can be cross-referenced against Jaeger and against the upstream
-probe (Plan 8 Milestone 3).
+This is the Plan 8 Milestone 2 spike after the Plan 9 refactor. The
+per-record @withExtractedContext@ + @withSpan'@ + @addAttribute@ stanza
+has been replaced with a single call to
+'Shibuya.Adapter.Kafka.Tracing.traced', which wraps each ingested
+envelope's 'AckHandle' so that the handler's eventual @finalize@ runs
+inside a Consumer-kind @shibuya.process.message@ span parented on the
+envelope's carried W3C @traceparent@ (when present).
 
 Spans are exported via the OTel SDK's default OTLP exporter at
 @http://localhost:4318@ — the Jaeger v2 instance started by
@@ -48,29 +49,14 @@ import OpenTelemetry.Trace (
     shutdownTracerProvider,
     tracerOptions,
  )
-import OpenTelemetry.Trace.Core (SpanContext (..), getSpanContext)
-import OpenTelemetry.Trace.Id (Base (..), spanIdBaseEncodedText, traceIdBaseEncodedText)
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.Adapter.Kafka.Tracing (traced)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
-import Shibuya.Core.Types (Envelope (..), MessageId (..))
-import Shibuya.Telemetry.Effect (
-    addAttribute,
-    runTracing,
-    withExtractedContext,
-    withSpan',
- )
-import Shibuya.Telemetry.Propagation (extractTraceContext)
-import Shibuya.Telemetry.Semantic (
-    attrMessagingDestinationName,
-    attrMessagingDestinationPartitionId,
-    attrMessagingMessageId,
-    attrMessagingSystem,
-    consumerSpanArgs,
-    processMessageSpanName,
- )
+import Shibuya.Core.Types (Envelope (..))
+import Shibuya.Telemetry.Effect (runTracing)
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import System.Environment (getArgs, lookupEnv)
@@ -110,45 +96,16 @@ main = do
                 Adapter{source} <- kafkaAdapter (defaultConfig [TopicName topicName])
                 Stream.fold Fold.drain
                     $ Stream.mapM
-                        ( \( Ingested
-                                { envelope =
-                                    env@Envelope
-                                        { messageId = MessageId msgIdText
-                                        , partition
-                                        , traceContext
-                                        }
-                                , ack = AckHandle finalize
-                                }
-                            ) -> do
-                                let parentCtx = traceContext >>= extractTraceContext
-                                liftIO $ case parentCtx of
-                                    Just ctx ->
-                                        TIO.putStrLn $
-                                            "[otel-demo] extracted parent traceId="
-                                                <> traceIdBaseEncodedText Base16 ctx.traceId
-                                                <> " parentSpanId="
-                                                <> spanIdBaseEncodedText Base16 ctx.spanId
-                                    Nothing -> TIO.putStrLn "[otel-demo] no parent trace context on envelope"
-                                withExtractedContext parentCtx $
-                                    withSpan' processMessageSpanName consumerSpanArgs $ \sp -> do
-                                        addAttribute sp attrMessagingSystem ("kafka" :: Text)
-                                        addAttribute sp attrMessagingDestinationName topicName
-                                        addAttribute sp attrMessagingMessageId msgIdText
-                                        case partition of
-                                            Just p -> addAttribute sp attrMessagingDestinationPartitionId p
-                                            Nothing -> pure ()
-                                        ourCtx <- liftIO (getSpanContext sp)
-                                        liftIO $
-                                            TIO.putStrLn $
-                                                "[otel-demo] opened span traceId="
-                                                    <> traceIdBaseEncodedText Base16 ourCtx.traceId
-                                                    <> " spanId="
-                                                    <> spanIdBaseEncodedText Base16 ourCtx.spanId
-                                        liftIO $ TIO.putStrLn $ "[otel-demo] envelope=" <> Text.pack (show env)
-                                        finalize AckOk
-                                        liftIO $ TIO.putStrLn "[otel-demo] AckOk"
+                        ( \Ingested{envelope = env, ack = AckHandle finalize} -> do
+                            liftIO $ TIO.putStrLn $ "[otel-demo] envelope=" <> Text.pack (show env)
+                            liftIO $ case env.traceContext of
+                                Just hdrs -> TIO.putStrLn $ "[otel-demo] envelope traceContext=" <> Text.pack (show hdrs)
+                                Nothing -> TIO.putStrLn "[otel-demo] no trace context on envelope"
+                            finalize AckOk
+                            liftIO $ TIO.putStrLn "[otel-demo] AckOk"
                         )
-                    $ Stream.take messagesToProcess source
+                    $ Stream.take messagesToProcess
+                    $ traced (TopicName topicName) source
         case result of
             Left err -> putStrLn $ "[otel-demo] Error: " <> show err
             Right () -> TIO.putStrLn "[otel-demo] Done."
