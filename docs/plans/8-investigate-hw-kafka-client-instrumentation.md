@@ -170,8 +170,13 @@ Observable outcomes at completion:
       recommendation is **Extend in-repo**, with a sketch of
       `Shibuya.Adapter.Kafka.Tracing` and an action item to spin out
       `docs/plans/9-<slug>.md` in Milestone 6.
-- [ ] Milestone 6 (conditional, only if Milestone 5 recommends Adopt or Extend):
-      spin out a follow-up ExecPlan `docs/plans/9-<slug>.md`.
+- [x] Milestone 6 (2026-04-18): follow-up plan written to
+      `docs/plans/9-add-shibuya-kafka-tracing-module.md`. Five
+      milestones: (1) add `hs-opentelemetry-api` build-dep to the
+      adapter library; (2) create `Shibuya.Adapter.Kafka.Tracing`
+      with the `traced` stream transformer + four unit tests; (3)
+      refactor `OtelDemo.hs` to use it; (4) version bump + docs;
+      (5) outcomes.
 
 
 ## Surprises & Discoveries
@@ -397,6 +402,9 @@ Observable outcomes at completion:
 ## Outcomes & Retrospective
 
 ### Recommendation: **Extend in-repo**
+
+**Follow-up plan filed at
+`docs/plans/9-add-shibuya-kafka-tracing-module.md`.**
 
 The investigation answers the central question — "what does the upstream
 `hs-opentelemetry-instrumentation-hw-kafka-client` add that
