@@ -166,8 +166,10 @@ Observable outcomes at completion:
       with `otel-demo:shibuya.process.message` as `CHILD_OF` it; trace
       `bffdcec4...` = `otel-producer-demo:shibuya.send.message` (Producer,
       DIY) with `otel-demo:shibuya.process.message` as `CHILD_OF` it.
-- [ ] Milestone 5: gap analysis and recommendation, written into Outcomes &
-      Retrospective below.
+- [x] Milestone 5 (2026-04-18): Outcomes & Retrospective filled in;
+      recommendation is **Extend in-repo**, with a sketch of
+      `Shibuya.Adapter.Kafka.Tracing` and an action item to spin out
+      `docs/plans/9-<slug>.md` in Milestone 6.
 - [ ] Milestone 6 (conditional, only if Milestone 5 recommends Adopt or Extend):
       spin out a follow-up ExecPlan `docs/plans/9-<slug>.md`.
 
@@ -394,10 +396,169 @@ Observable outcomes at completion:
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation. At completion this must answer:
-is the upstream library usable as-is here? what does it uniquely offer over
-`Shibuya.Telemetry`? what is the recommended path forward in terms of concrete
-follow-up work, if any?)
+### Recommendation: **Extend in-repo**
+
+The investigation answers the central question — "what does the upstream
+`hs-opentelemetry-instrumentation-hw-kafka-client` add that
+`Shibuya.Telemetry` does not?" — with: **a fixed set of attribute
+defaults and one `produceMessage` wrapper, both of which we can
+reproduce in roughly 60 lines of Haskell against Shibuya's existing
+primitives, without taking on a third-party dep that does not support
+the adapter's batch hot path.**
+
+The recommended follow-up plan is to add a thin, in-repo module
+`Shibuya.Adapter.Kafka.Tracing` (described in Question 3 below) and
+spin out the work as `docs/plans/9-<slug>.md`. The upstream library
+remains useful as a reference; this repo should not depend on it.
+
+### Question-by-question gap analysis
+
+#### Q1. Does the upstream consumer wrapper add anything Shibuya does not?
+
+**No, on attribute coverage. Yes, on lines-of-caller-code, but the gap
+is small.** The Milestone 2 and Milestone 3 spans are functionally
+equivalent; both are kind=Consumer, both correctly continue from the
+`traceparent`. The differences are:
+
+- The upstream wrapper auto-derives attributes from the
+  `ConsumerRecord`. The Shibuya path requires the caller to add each
+  attribute explicitly (`addAttribute sp attrMessagingDestinationName
+  topicName`, etc.). For four attributes this is roughly four extra
+  lines per call site.
+- The two libraries pick different attribute key namespaces. Shibuya
+  uses the v1.27 stable messaging-conventions (`messaging.message.id`,
+  `messaging.destination.partition.id`). Upstream uses the older
+  Kafka-namespaced keys (`messaging.kafka.message.offset`,
+  `messaging.kafka.destination.partition`). Switching to the upstream
+  keys would be a regression against Shibuya's existing convention.
+- The upstream wrapper opens its span around a `pure record`; the
+  span represents arrival, not handler execution. Shibuya's path
+  wraps the handler so the span's duration measures what the user
+  actually did with the message — strictly more useful.
+
+The upstream wrapper does not add anything the adapter cannot already
+do, and what it does add (auto-attributes) comes with key-name baggage
+the rest of the Shibuya stack does not want.
+
+#### Q2. Can the upstream library instrument `pollMessageBatch`?
+
+**Confirmed: it cannot in 0.1.0.0.** The upstream module exposes only
+single-message `pollMessage`. Switching the adapter from
+`pollMessageBatch` to `pollMessage` to gain a wrapper-managed span is a
+non-starter: `pollMessageBatch` is the throughput-critical call.
+Replacing it would inflate librdkafka call rate by `batchSize` times
+(`KafkaAdapterConfig.batchSize`, default 100) and would invalidate the
+benchmarking baseline in `shibuya-kafka-adapter-bench/baseline.csv`.
+The investigation confirms there is no in-API workaround.
+
+#### Q3. Sketch of an in-repo `Shibuya.Adapter.Kafka.Tracing` module
+
+A minimal module that operates over the existing batch path. Proposed
+surface:
+
+    module Shibuya.Adapter.Kafka.Tracing
+      ( traced
+      ) where
+
+    -- | Wrap each yielded 'Ingested' in a Consumer-kind span derived from
+    -- the envelope's W3C trace context. The span name is
+    -- 'processMessageSpanName' from "Shibuya.Telemetry.Semantic"; the
+    -- attributes follow the v1.27 messaging conventions and mirror
+    -- 'consumerRecordToEnvelope' field-for-field.
+    --
+    -- Use as a stream transformer immediately after 'Adapter.source':
+    --
+    -- @
+    -- Adapter{source} <- kafkaAdapter cfg
+    -- Stream.fold drainHandler (traced (Stream.mapM userHandler source))
+    -- @
+    traced
+      :: (Tracing :> es, IOE :> es)
+      => Stream (Eff es) (Ingested es v)
+      -> Stream (Eff es) (Ingested es v)
+
+The module would live in `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Tracing.hs`
+and add no new direct deps beyond `shibuya-core` and `streamly` (both
+already present). The `Adapter` API itself stays unchanged — `traced`
+is purely additive, opt-in by the caller.
+
+The implementation transforms each emitted `Ingested` by opening a span
+inside its own `Stream.mapM` step and replacing the `AckHandle.finalize`
+with a wrapper that closes the span after the user's ack decision
+fires. That preserves the batch hot path, span duration covers the
+handler, and no upstream code is replaced.
+
+#### Q4. Producer-side: upstream wrapper vs DIY helper
+
+**The DIY helper wins on dependency hygiene; the upstream wrapper wins
+on lines saved.** The DIY branch in Milestone 4 is roughly 12 lines
+(open span, set kind=Producer, add 2 attributes, inject headers, build
+record, call `KP.produceMessage`); the upstream version is one
+function call. Today the adapter has zero in-library producer call
+sites — the only producer use is `Kafka.TestEnv.produceMessages` in
+the test suite, which currently uses `kafka-effectful`'s producer
+effect and adding a tracer there is out of scope for this plan.
+
+If a future DLQ milestone introduces an in-adapter producer, the
+follow-up plan from Question 3 should add a sibling helper
+`Shibuya.Adapter.Kafka.Tracing.tracedProduce` of the same shape as
+`traced`, built from the same `withSpan' Producer` +
+`injectTraceContext` primitives demonstrated in
+`OtelProducerDemo.hs`. No upstream dependency required.
+
+#### Q5. Consumer-group-id workaround impact
+
+**Free.** `BasicConsumer.hs:45` and every other consumer in the
+jitsurei suite already pass `groupId (ConsumerGroupId ...)` because
+Kafka requires it. So if the upstream library *were* adopted, its
+documented "pass `ConsumerProperties` so the wrapper can read
+`group.id`" workaround would not impose any extra burden. It is also
+not a discriminator against adoption.
+
+### Lines-of-code summary
+
+- Adoption (upstream library) cost: 1 new direct dep, ~40 lines of
+  glue around `pollMessage`/`produceMessage`, no batch-poll support,
+  attribute namespace divergence with Shibuya's messaging conventions,
+  and an open question about future Hackage maintenance (the package
+  has had only one release).
+- Extension (in-repo `Shibuya.Adapter.Kafka.Tracing`): 0 new deps
+  (`hs-opentelemetry-api` is already pulled in by `shibuya-core`),
+  ~60 lines of code in one new module, full batch-poll support,
+  attribute namespace stays aligned with Shibuya, all changes
+  reversible by deleting the new module.
+
+### What was learned beyond the recommendation
+
+- Shibuya's `Tracing` effect is enough. Every consumer-side requirement
+  the upstream library serves is already covered by
+  `withExtractedContext`, `withSpan'`, `addAttribute`, and the
+  `Envelope.traceContext` plumbing the adapter already does.
+- The Jaeger v2 binary works as a no-config OTel collector; that
+  pattern is now reusable for any future Shibuya adapter that wants to
+  prove its tracing wiring end-to-end. The
+  `process-compose.yaml` + `.dev/jaeger-config.yaml` artifacts can be
+  copied verbatim into sibling adapters.
+- The handle exporter situation on Hackage is broken at the time of
+  writing; future work that wants stdout span dumps should either pin
+  a fork or generate textual evidence by reading `getSpanContext`
+  inside `withSpan'` callbacks (the pattern adopted here).
+- Attribute-name divergence between the two messaging-convention
+  namespaces is the kind of subtle interop break that does not show up
+  until a downstream consumer (Grafana dashboard, Jaeger filter) tries
+  to filter by both keys. Worth flagging in the follow-up plan: pick
+  the v1.27 namespace and stick with it everywhere.
+
+### Where the plan diverged from its initial scope
+
+- The handle exporter was dropped (Decision Log entry). Replaced by
+  reading span context manually for textual evidence.
+- An explicit `hs-opentelemetry-api ^>=0.3` build-dep had to be added,
+  contrary to the plan's initial claim that transitive presence was
+  enough. The bound matches what the SDK pins, so no solver pain.
+- `otel-demo` gained args/env-driven knobs in Milestone 4 to support
+  the verification step; same code, fewer copies. Default behaviour
+  unchanged, so Milestone 2's recipe still works as written.
 
 
 ## Context and Orientation
