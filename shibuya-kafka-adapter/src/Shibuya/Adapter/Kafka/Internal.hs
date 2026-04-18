@@ -16,7 +16,7 @@ where
 
 import Data.ByteString (ByteString)
 import Data.Function ((&))
-import Effectful (Eff, IOE, (:>))
+import Effectful (Eff, (:>))
 import Effectful.Error.Static (Error, throwError)
 import Kafka.Consumer.Types (ConsumerRecord (..))
 import Kafka.Effectful.Consumer.Effect (
@@ -43,7 +43,7 @@ Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
 upstream handling.
 -}
 kafkaSource ::
-    (KafkaConsumer :> es, IOE :> es) =>
+    (KafkaConsumer :> es) =>
     KafkaAdapterConfig ->
     Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
 kafkaSource config =
@@ -64,7 +64,7 @@ Maps 'AckDecision' to Kafka operations:
 * 'AckHalt' -> 'pausePartitions' (do NOT store offset; message will be re-consumed)
 -}
 mkAckHandle ::
-    (KafkaConsumer :> es, Error KafkaError :> es) =>
+    (KafkaConsumer :> es) =>
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
     AckHandle es
 mkAckHandle cr = AckHandle $ \case
@@ -82,7 +82,7 @@ mkAckHandle cr = AckHandle $ \case
 Lease is always 'Nothing' for Kafka (no visibility timeout mechanism).
 -}
 mkIngested ::
-    (KafkaConsumer :> es, Error KafkaError :> es) =>
+    (KafkaConsumer :> es) =>
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
     Ingested es (Maybe ByteString)
 mkIngested cr =

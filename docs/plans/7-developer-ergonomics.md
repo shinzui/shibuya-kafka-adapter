@@ -248,11 +248,13 @@ Tear down:
       above. (2026-04-18)
 - [x] Milestone 1: `just --list` prints the expected groups and recipes from
       within the Nix dev shell. (2026-04-18)
-- [ ] Milestone 2: Apply the aligned warning set to all three cabal files'
-      `common warnings` stanzas.
-- [ ] Milestone 2: `cabal build all` passes with the new warnings.
-- [ ] Milestone 2: Fix any new warnings or record targeted suppressions with
-      rationale.
+- [x] Milestone 2: Apply the aligned warning set to all three cabal files'
+      `common warnings` stanzas. (2026-04-18)
+- [x] Milestone 2: `cabal build all` passes with the new warnings. (2026-04-18)
+- [x] Milestone 2: Fix any new warnings or record targeted suppressions with
+      rationale. (2026-04-18 — dropped redundant `IOE :> es` on `kafkaSource`,
+      redundant `Error KafkaError :> es` on both `mkAckHandle` and `mkIngested`,
+      and four unused imports in `test/Kafka/TestEnv.hs`)
 - [ ] Milestone 3: Add the partition-EOF caveat paragraph to `README.md`.
 - [ ] Milestone 3: Add a Development/Justfile pointer to `README.md`.
 - [ ] Milestone 4: Remove `"iand675/hs-opentelemetry"` from `mori.dhall`'s
@@ -266,10 +268,30 @@ Tear down:
 
 ## Surprises & Discoveries
 
-(None yet. Record discoveries here as implementation proceeds. Likely
-candidates: unexpected warnings from the aligned warning set; `just`
-unexpectedly missing from the dev shell; an `rpk topic create` variant that
-returns nonzero even with `|| true`.)
+The aligned warning set flagged more redundant constraints than the plan
+anticipated. Plan 5's Milestone 3 had already dropped `Error KafkaError :> es`
+from `kafkaSource`, but three further redundancies showed up under
+`-Wredundant-constraints`:
+
+* `IOE :> es` on `Shibuya.Adapter.Kafka.Internal.kafkaSource` (line 46).
+* `Error KafkaError :> es` on `Shibuya.Adapter.Kafka.Internal.mkAckHandle`
+  (line 67). `storeOffsetMessage` and `pausePartitions` throw via the
+  `KafkaConsumer` effect interpretation; they do not require the `Error`
+  constraint at the call site.
+* `Error KafkaError :> es` on `Shibuya.Adapter.Kafka.Internal.mkIngested`
+  (line 85) — same rationale.
+
+All three were dropped. The outer `kafkaAdapter` constraint set
+(`KafkaConsumer :> es, Error KafkaError :> es, IOE :> es`) is unchanged; those
+constraints are genuinely load-bearing on the outer signature because
+`ingestedStream` (via `throwError`) and `liftIO` at the adapter boundary use
+them.
+
+`-Wunused-imports` also flagged four imports in `test/Kafka/TestEnv.hs` that
+had been redundant for a while and were only surfaced by the stricter set:
+`IORef` type name, `Eff`/`IOE`/`(:>)` from `Effectful`, `Error` from
+`Effectful.Error.Static`, and `KafkaConsumer` from `Kafka.Effectful.Consumer`.
+All removed.
 
 
 ## Decision Log

@@ -20,15 +20,14 @@ where
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
-import Effectful (Eff, IOE, runEff, (:>))
-import Effectful.Error.Static (Error, runError)
+import Effectful (runEff)
+import Effectful.Error.Static (runError)
 import Kafka.Consumer.ConsumerProperties (ConsumerProperties)
 import Kafka.Consumer.Subscription (Subscription)
 import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), OffsetReset (..))
 import Kafka.Effectful.Consumer (
-    KafkaConsumer,
     brokersList,
     groupId,
     noAutoOffsetStore,
