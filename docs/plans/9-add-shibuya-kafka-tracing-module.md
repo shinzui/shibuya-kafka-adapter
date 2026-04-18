@@ -103,7 +103,7 @@ both.
       changelog if the project keeps one. Bump `shibuya-kafka-adapter`'s
       version per semver — this is an additive change that should be a
       minor bump.
-- [ ] Milestone 5: Outcomes & Retrospective.
+- [x] Milestone 5 (2026-04-18): Outcomes & Retrospective.
 
 
 ## Surprises & Discoveries
@@ -222,11 +222,104 @@ the Jaeger recipe end-to-end is a follow-up manual step.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation. At completion this
-must answer: does `traced` close all four shapes the test enumerates?
-Did `OtelDemo.hs` actually shrink? Are there any callers in the wider
-Shibuya monorepo that would benefit from the same pattern but cannot
-adopt it because of an effect-stack mismatch?)
+The plan landed in five commits, one per milestone, each carrying the
+`ExecPlan:` and `Intention:` trailers. `shibuya-kafka-adapter` now
+ships version 0.2.0.0 with a new exposed module
+`Shibuya.Adapter.Kafka.Tracing` whose single export `traced` replaces
+a ~25-line boilerplate stanza at every adapter call site that wants
+OpenTelemetry per-message spans.
+
+**Does `traced` close all four shapes the test enumerates?** Yes. The
+four `TracingTest` cases all pass:
+
+1. **Parented span.** An envelope carrying a W3C
+   `traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01`
+   produces a span whose own `SpanContext.traceId` equals the parent's
+   traceId and whose `spanParent` is a `FrozenSpan` wrapping the
+   parent's `SpanContext`. The parent's spanId matches
+   `b7ad6b7169203331`.
+2. **Root span.** An envelope with `traceContext = Nothing` produces a
+   span whose `spanParent` is `Nothing`.
+3. **Attributes.** `messaging.system`, `messaging.destination.name`,
+   `messaging.message.id`, and `messaging.destination.partition.id`
+   are all present with the expected text values on the captured
+   span's `spanAttributes`.
+4. **Ack passthrough.** Calling `finalize AckOk` on the wrapped
+   `AckHandle` observably invokes the underlying finalize (an `IORef
+   (Maybe AckDecision)` sees `Just AckOk`).
+
+All four tests run without a Kafka broker, under `runTracing` with a
+locally-constructed `TracerProvider` whose sole `SpanProcessor`
+appends ended spans to an `IORef`. The processor is ~15 lines of
+Haskell inlined at the top of `TracingTest.hs`; the decision to inline
+rather than depend on `hs-opentelemetry-exporter-in-memory` is
+captured in the Decision Log (Hackage release of that package pins
+`hs-opentelemetry-api <0.3` while this repo resolves to 0.3.1.0).
+
+**Did `OtelDemo.hs` actually shrink?** Yes — from 154 lines to 111,
+43 lines shorter. The per-record `withExtractedContext` + `withSpan'`
++ four-`addAttribute` stanza and the associated imports from
+`Shibuya.Telemetry.Effect`, `Shibuya.Telemetry.Propagation`, and
+`Shibuya.Telemetry.Semantic` are all gone. Post-refactor, the only
+Shibuya tracing imports are
+`Shibuya.Adapter.Kafka.Tracing.traced` and
+`Shibuya.Telemetry.Effect.runTracing`, matching the plan's acceptance
+criterion verbatim.
+
+**In-memory exporter vs `getSpanContext` fallback — which path did we
+take?** The in-memory `SpanProcessor` path. The plan's contingency
+(assert span shape via `OTel.getSpanContext` inside the wrapped
+handler) was not needed: capturing the full `ImmutableSpan` gives us
+direct access to `spanParent`, `spanContext`, and `spanAttributes`,
+which is strictly more informative than what `getSpanContext` alone
+would have revealed.
+
+**Attribute-namespace divergence — still flagged.** The new module
+uses the v1.27 messaging-conventions keys from
+`Shibuya.Telemetry.Semantic` exclusively and does **not** emit the
+Kafka-namespaced keys that the upstream
+`hs-opentelemetry-instrumentation-hw-kafka-client` wrapper uses
+(`messaging.kafka.destination.partition`,
+`messaging.kafka.message.offset`, `messaging.kafka.message.key`,
+`messaging.kafka.consumer.group`). Plan 8 Milestone 5's gap analysis
+remains the authoritative reference for why Shibuya picks one set and
+sticks to it; nothing in this plan's implementation uncovered a
+reason to revisit that choice.
+
+**Known gaps and follow-ups.**
+
+- **Jaeger runtime verification was deferred.** Plan Milestone 3's
+  step 5 ("`cabal run otel-demo` and see the same Jaeger trace shape
+  as Plan 8 Milestone 2") was not executed in this implementation
+  session because `just process-up` (Redpanda + Jaeger spin-up) is
+  interactive and outside this agent's scope. The unit tests cover
+  the same logical shape (span parent, attributes, ack passthrough)
+  and the build compiles clean, so the risk is low; re-running the
+  recipe end-to-end remains a manual follow-up step.
+- **The span wraps only `finalize`, not the handler's work before
+  `finalize` is called.** This is a direct consequence of `traced`
+  being upstream of the user handler in the stream: once the handler
+  receives the `Ingested`, it does its work and then calls
+  `finalize`, at which point `wrappedFinalize` opens the span and
+  closes it around the finalize body. Callers that want to time the
+  handler itself can use Shibuya's `withSpan` inside the handler as a
+  child span; the adapter doesn't try to cover that case because the
+  downstream stream transformer pattern can't hold a span open across
+  stream boundaries without manual start/end lifecycle management
+  (which would lose the bracket-safety guarantees of `withSpan'`).
+  This is noted here as a known limitation of the "stream transformer"
+  style and not a bug.
+- **No producer-side helper.** The plan was explicit that the
+  producer-side analogue ships with the future DLQ work, not here.
+  `OtelProducerDemo.hs` remains in the jitsurei as a reference for
+  what that helper will eventually subsume.
+
+**Effect-stack mismatch for other Shibuya monorepo callers?** Not
+investigated in this session. `traced` requires `Tracing :> es` and
+`IOE :> es`, which are satisfied by any caller that already runs
+under `runTracing`. The only Shibuya-shaped caller in this repo is
+the jitsurei demo; broader adoption awaits the DLQ follow-up plan and
+any new adapter builds on top of shibuya-core's `Tracing` effect.
 
 
 ## Context and Orientation
