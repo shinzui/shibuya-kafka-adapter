@@ -255,8 +255,10 @@ Tear down:
       rationale. (2026-04-18 — dropped redundant `IOE :> es` on `kafkaSource`,
       redundant `Error KafkaError :> es` on both `mkAckHandle` and `mkIngested`,
       and four unused imports in `test/Kafka/TestEnv.hs`)
-- [ ] Milestone 3: Add the partition-EOF caveat paragraph to `README.md`.
-- [ ] Milestone 3: Add a Development/Justfile pointer to `README.md`.
+- [x] Milestone 3: Add the partition-EOF caveat paragraph to `README.md`.
+      (2026-04-18)
+- [x] Milestone 3: Add a Development/Justfile pointer to `README.md`.
+      (2026-04-18)
 - [ ] Milestone 4: Remove `"iand675/hs-opentelemetry"` from `mori.dhall`'s
       `dependencies` list.
 - [ ] Milestone 4: `mori show --full` no longer lists `hs-opentelemetry`.
