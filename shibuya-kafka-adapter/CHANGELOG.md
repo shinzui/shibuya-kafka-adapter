@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.0.0 — 2026-04-18
+
+Additive release. Adds one new exposed module, no changes to existing
+public types or to `kafkaAdapter`'s signature.
+
+### Added
+
+- `Shibuya.Adapter.Kafka.Tracing` exposing a single stream transformer
+  `traced :: (Tracing :> es, IOE :> es) => TopicName -> Stream (Eff es)
+  (Ingested es v) -> Stream (Eff es) (Ingested es v)`. For each emitted
+  `Ingested`, `traced` rewrites the envelope's `AckHandle` so that
+  when the downstream handler calls `finalize` the call is enclosed
+  in a Consumer-kind `shibuya.process.message` span parented on the
+  envelope's carried W3C `traceparent` (or a root span when absent).
+  The span carries the v1.27 messaging-conventions attribute set
+  (`messaging.system`, `messaging.destination.name`,
+  `messaging.message.id`, and — when partition is known —
+  `messaging.destination.partition.id`) from
+  `Shibuya.Telemetry.Semantic`.
+
+- Explicit `hs-opentelemetry-api ^>=0.3` build-depends edge on the
+  library. The package was previously in the closure transitively via
+  `shibuya-core`, but cabal does not let a library import from a
+  transitively-present dependency.
+
 ## 0.1.0.0 — 2026-04-18
 
 Initial release.

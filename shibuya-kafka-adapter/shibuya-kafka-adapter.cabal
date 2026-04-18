@@ -1,6 +1,6 @@
 cabal-version:   3.12
 name:            shibuya-kafka-adapter
-version:         0.1.0.0
+version:         0.2.0.0
 synopsis:        Kafka adapter for the Shibuya queue processing framework
 description:
   A Shibuya adapter that integrates with Apache Kafka via kafka-effectful

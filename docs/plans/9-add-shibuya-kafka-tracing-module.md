@@ -98,11 +98,11 @@ both.
       `CHILD_OF` reference. Document the diff in Surprises &
       Discoveries. (Jaeger runtime verification deferred to manual
       check; static acceptance met — see Surprises entry below.)
-- [ ] Milestone 4: Document the new module in `README.md` and in the
-      cabal description, if appropriate. Update the changelog if the
-      project keeps one. Bump `shibuya-kafka-adapter`'s version per
-      semver — this is an additive change that should be a minor
-      bump.
+- [x] Milestone 4 (2026-04-18): Document the new module in `README.md`
+      and in the cabal description, if appropriate. Update the
+      changelog if the project keeps one. Bump `shibuya-kafka-adapter`'s
+      version per semver — this is an additive change that should be a
+      minor bump.
 - [ ] Milestone 5: Outcomes & Retrospective.
 
 
