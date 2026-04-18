@@ -2,7 +2,7 @@
 
 Kafka adapter for the [Shibuya](https://github.com/shinzui/shibuya) queue-processing framework.
 
-Integrates with Apache Kafka via [`kafka-effectful`](https://github.com/shinzui/kafka-effectful) and [`hw-kafka-client`](https://github.com/haskell-works/hw-kafka-client). Provides polling, offset commit semantics, partition awareness, and graceful shutdown.
+Integrates with Apache Kafka via [`kafka-effectful`](https://github.com/shinzui/kafka-effectful) for the consumer effect and [`hw-kafka-streamly`](https://hackage.haskell.org/package/hw-kafka-streamly) for the streaming source and error classification, on top of [`hw-kafka-client`](https://github.com/haskell-works/hw-kafka-client). Provides polling, offset commit semantics, partition awareness, and graceful shutdown.
 
 ## Packages
 
