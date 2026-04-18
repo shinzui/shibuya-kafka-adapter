@@ -52,19 +52,20 @@ library
     QuasiQuotes
 
   build-depends:
-    , base               ^>=4.21.0.0
-    , bytestring         ^>=0.12
-    , containers         ^>=0.7
-    , effectful-core     ^>=2.6.1.0
-    , hw-kafka-client    >=5.3       && <6
-    , hw-kafka-streamly  ^>=0.1
-    , kafka-effectful    ^>=0.1
-    , shibuya-core       ^>=0.1.0.0
-    , stm                ^>=2.5
-    , streamly           ^>=0.11
-    , streamly-core      ^>=0.3
-    , text               ^>=2.1
-    , time               ^>=1.14
+    , base                  ^>=4.21.0.0
+    , bytestring            ^>=0.12
+    , containers            ^>=0.7
+    , effectful-core        ^>=2.6.1.0
+    , hs-opentelemetry-api  ^>=0.3
+    , hw-kafka-client       >=5.3       && <6
+    , hw-kafka-streamly     ^>=0.1
+    , kafka-effectful       ^>=0.1
+    , shibuya-core          ^>=0.1.0.0
+    , stm                   ^>=2.5
+    , streamly              ^>=0.11
+    , streamly-core         ^>=0.3
+    , text                  ^>=2.1
+    , time                  ^>=1.14
 
   hs-source-dirs:     src
   default-language:   GHC2024

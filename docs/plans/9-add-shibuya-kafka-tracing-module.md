@@ -71,7 +71,7 @@ both.
 
 ## Progress
 
-- [ ] Milestone 1: Add the dependency edge — make
+- [x] Milestone 1 (2026-04-18): Add the dependency edge — make
       `shibuya-kafka-adapter` build-depend on `hs-opentelemetry-api`
       directly (transitive presence via `shibuya-core` is real but
       cabal does not let us import from a transitively-present
