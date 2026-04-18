@@ -8,11 +8,22 @@ description:
   awareness, and graceful shutdown.
 
 author:          Nadeem Bitar
+copyright:       2026 Nadeem Bitar
 maintainer:      nadeem@gmail.com
+homepage:        https://github.com/shinzui/shibuya-kafka-adapter
+bug-reports:     https://github.com/shinzui/shibuya-kafka-adapter/issues
 license:         MIT
+license-file:    LICENSE
 build-type:      Simple
+tested-with:     GHC ==9.12.2
 category:        Concurrency, Streaming
-extra-doc-files: CHANGELOG.md
+extra-doc-files:
+  CHANGELOG.md
+  README.md
+
+source-repository head
+  type:     git
+  location: https://github.com/shinzui/shibuya-kafka-adapter.git
 
 common warnings
   ghc-options: -Wall
