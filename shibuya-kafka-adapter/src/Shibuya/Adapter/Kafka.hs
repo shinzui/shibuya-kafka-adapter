@@ -64,9 +64,15 @@ module Shibuya.Adapter.Kafka (
     -- * Defaults
     defaultConfig,
 
-    -- * Re-exports from kafka-effectful / hw-kafka-client
-    module Kafka.Types,
-    module Kafka.Consumer.Types,
+    -- * Re-exports
+    TopicName (..),
+    BrokerAddress (..),
+    ConsumerGroupId (..),
+    OffsetReset (..),
+    OffsetCommit (..),
+    Timeout (..),
+    BatchSize (..),
+    KafkaError,
 )
 where
 
@@ -76,9 +82,9 @@ import Data.ByteString (ByteString)
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
-import Kafka.Consumer.Types (OffsetCommit (..), OffsetReset (..))
+import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), OffsetReset (..))
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets)
-import Kafka.Types (KafkaError, TopicName (..))
+import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
 import Shibuya.Adapter.Kafka.Internal (ingestedStream, kafkaSource, mkIngested)
