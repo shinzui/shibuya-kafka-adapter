@@ -216,6 +216,90 @@ Expected output: the new test case passes, and the existing integration tests
 still pass when the Redpanda broker is running (started via `process-compose up`).
 
 
+### Milestone 7: Demonstrate fatal-error propagation end-to-end via a jitsurei app
+
+The white-box tests in Milestone 6 prove the `ingestedStream` helper throws
+for any `Left KafkaError` input. They do not exercise the full path from a
+real broker interaction to the user's `runError` boundary. Milestone 7 closes
+that gap with a runnable program a developer can execute manually and watch
+fail cleanly.
+
+Add a new executable named `fatal-error-demo` to the `shibuya-kafka-adapter-jitsurei`
+package. Create `shibuya-kafka-adapter-jitsurei/app/FatalErrorDemo.hs` that
+deliberately configures the consumer to provoke a fatal Kafka error that
+surfaces through `pollMessageBatch` (the in-band error channel the adapter
+listens on), and prints the resulting `Left KafkaError` from
+`runError @KafkaError`.
+
+The chosen injection is @security.protocol=SSL@ set via
+`extraProp "security.protocol" "ssl"` combined with an `ssl.ca.location`
+pointing at a file that does not exist. Reasoning:
+
+* `newConsumer` (which is what `runKafkaConsumer` calls during its `acquire`
+  phase) is expected to succeed — librdkafka parses the config without trying
+  to open a TLS connection yet. If creation fails instead, the error still
+  surfaces as `Left err` via the `Error KafkaError` effect from
+  `runKafkaConsumer`'s `acquire`, but through a different code path than the
+  one Plan 5 wired up. Either outcome is acceptable for the demo as long as
+  the user observes `Left err`.
+* When the consumer then tries to connect during the first poll, librdkafka
+  attempts a TLS handshake against a broker that speaks plain text. The
+  failure is delivered back through `pollMessage`/`pollMessageBatch` as a
+  `Left KafkaError`. The most likely error code is
+  `KafkaResponseError RdKafkaRespErrSsl`, which is fatal per
+  `hw-kafka-streamly`'s `isFatal`. Other possibilities include
+  `RdKafkaRespErrAllBrokersDown` (not fatal) or `RdKafkaRespErrTransport`
+  (not fatal), in which case the injection does not demonstrate Plan 5 and
+  must be swapped for a different one.
+
+Fallback injection if SSL does not surface as fatal: set
+`sasl.mechanism=BOGUSMECH` with `security.protocol=SASL_PLAINTEXT`. librdkafka
+typically accepts the mechanism string at parse time and only rejects it when
+it tries to authenticate, emitting `RdKafkaRespErrUnsupportedSaslMechanism`
+(fatal).
+
+Final fallback if neither surfaces through the poll path: inject an invalid
+configuration value (for example `auto.offset.reset=bogus`) that
+`newConsumer` rejects with `KafkaInvalidConfigurationValue`. This still
+demonstrates `Left err` from `runError` but takes the `runKafkaConsumer`
+`acquire` path rather than the stream path; document the limitation in the
+demo's top-level comment.
+
+The demo should:
+
+1. Print a single-line announcement of what error it is trying to provoke.
+2. Run the adapter against @TopicName "orders"@ (same as `BasicConsumer.hs`)
+   so the demo fits into the existing convention and the developer does not
+   need to manage a new topic.
+3. Drain the stream; on a `Left err` from `runError`, print the matched
+   error value and exit with a non-zero status code (so a CI-style runner
+   can tell success from failure).
+4. On an unexpected `Right ()`, print a clear failure message indicating the
+   injection did not provoke an error and exit with a different non-zero
+   status code.
+
+Wire the new executable into `shibuya-kafka-adapter-jitsurei/shibuya-kafka-adapter-jitsurei.cabal`
+by copying the stanza pattern already used for `basic-consumer` and
+`multi-topic`.
+
+Validate by running:
+
+    process-compose up -d   # if not already running
+    rpk topic create orders -p 1 2>/dev/null || true
+    cabal run fatal-error-demo
+
+Expected observable outcome: the program prints its announcement, then a
+single `Error: <rendered KafkaError>` line where `<rendered KafkaError>`
+matches the injection (for example `KafkaResponseError RdKafkaRespErrSsl`),
+then exits with a non-zero status. The program must not hang indefinitely.
+
+If the chosen injection produces a non-fatal error (for instance
+`RdKafkaRespErrAllBrokersDown` on some librdkafka versions), the adapter will
+silently filter it via `skipNonFatal` and the stream will poll forever. In
+that case, switch to the next injection in the fallback chain above and
+record the finding in Surprises & Discoveries.
+
+
 ## Progress
 
 - [x] Milestone 1: Read `Kafka.hs`, `Internal.hs`, `hw-kafka-streamly/Source.hs`,
@@ -249,6 +333,26 @@ still pass when the Redpanda broker is running (started via `process-compose up`
       `Left` without forcing later elements. (2026-04-18)
 - [x] Milestone 6: Full test suite (23 tests) passes against a running Redpanda
       broker. (2026-04-18)
+- [x] Milestone 7: Prototyped three injections — SSL+missing-CA, SSL with
+      default CA, and SASL with bogus mechanism. Discovered that on vanilla
+      Redpanda all fatal configurations are caught at `newConsumer` time and
+      surface via `runKafkaConsumer`\'s `acquire` phase rather than through
+      the poll stream. SSL without explicit CA produces only retriable
+      transport errors and hangs the poller forever. (2026-04-18)
+- [x] Milestone 7: Added `fatal-error-demo` executable (`FatalErrorDemo.hs`)
+      to the `shibuya-kafka-adapter-jitsurei` package. Chose the SSL+bad-CA
+      injection for its fast, deterministic failure (~200ms, clean error
+      message). Documented the acquire-vs-stream path distinction in the
+      module Haddock. (2026-04-18)
+- [x] Milestone 7: Wired the new `fatal-error-demo` stanza into
+      `shibuya-kafka-adapter-jitsurei.cabal`, adding a `containers` dep for
+      `Data.Map.Strict`. (2026-04-18)
+- [x] Milestone 7: Ran the demo against a live Redpanda broker. Output:
+
+          [fatal-error-demo] Starting. Expecting a fatal KafkaError...
+          [fatal-error-demo] Fatal error propagated: KafkaError "ssl.ca.location failed: error:05880020:x509 certificate routines::BIO lib"
+
+      Exit code: 1. (2026-04-18)
 
 
 ## Surprises & Discoveries
@@ -272,6 +376,33 @@ still pass when the Redpanda broker is running (started via `process-compose up`
   constraints minimal (`Error KafkaError :> es` only), so the test does not
   need to provide a `KafkaConsumer` interpreter at all. Integration option 1
   from the plan (invalid broker address) was not needed. (2026-04-18)
+
+- Milestone 7 finding: against a vanilla Redpanda with no broker-side auth
+  enforcement, every injection tried to surface a fatal `KafkaError` is
+  caught by librdkafka at `newConsumer` time rather than at poll time:
+
+  * SSL with a nonexistent `ssl.ca.location` → rejected at `newConsumer`
+    (clean, ~200ms, surfaces via the `acquire` path).
+  * SSL with no explicit CA → parses OK, but handshake failures against a
+    plaintext broker are reported as retriable transport errors and poll
+    spins forever.
+  * SASL with `sasl.mechanism=BOGUSMECH` → rejected at `newConsumer` with
+    `KafkaError "Unsupported SASL mechanism: BOGUSMECH"` before any network
+    I/O happens.
+
+  The common pattern: librdkafka validates config aggressively, so anything
+  it can reject deterministically is rejected at creation. Runtime-fatal
+  errors (the ones Plan 5 explicitly catches in `ingestedStream`) require
+  the broker to actively reject an otherwise-valid consumer — SASL/SSL
+  enforcement, topic/group ACLs, protocol version mismatches. None of those
+  are present on a vanilla Redpanda.
+
+  Operational implication: from the caller's perspective the observable
+  contract is the same — `Left err` from `runError @KafkaError` — regardless
+  of which internal path the error flows through. The jitsurei demo
+  therefore exercises the acquire path (cleanest for a reproducible demo)
+  and defers stream-path coverage to the white-box unit test in
+  `AdapterTest`. (2026-04-18)
 
 
 ## Decision Log
@@ -311,6 +442,19 @@ still pass when the Redpanda broker is running (started via `process-compose up`
   notice", which matches the conventional Haskell `.Internal` pattern and
   preserves the intent that external consumers avoid the module. Date:
   2026-04-18.
+
+- Decision: the Milestone 7 jitsurei demo exercises the `runKafkaConsumer`
+  acquire path rather than the stream path, despite the plan's original
+  preference. Rationale: after trying SSL, SASL, and SSL-with-system-CA
+  injections, every configuration librdkafka can reject deterministically is
+  rejected at `newConsumer` time, not at poll time. The alternatives that do
+  surface via poll (SSL handshake failures against a plaintext broker, broker
+  ACL rejections) either get classified as retriable transport errors —
+  causing the poll loop to spin forever — or require broker-side
+  configuration we are unwilling to ship in the demo. The demo's purpose is
+  to show the caller-visible contract (`Left err` from `runError`), which is
+  identical regardless of internal path. The stream-path logic itself is
+  already covered by the white-box tests in `AdapterTest`. Date: 2026-04-18.
 
 
 ## Outcomes & Retrospective
@@ -352,3 +496,14 @@ that compare error values need to destructure the tuple.
 What remains: the plan noted a future option to add programmatic resume after
 `AckHalt`. That is deliberately out of scope — no user-reported need, and it
 would expand the `Adapter` surface. Documented as existing behavior only.
+
+Milestone 7 addendum (2026-04-18): the `fatal-error-demo` jitsurei executable
+provides a runnable end-to-end demonstration of the `Left err` caller
+contract. In practice it exercises the `runKafkaConsumer` acquire path rather
+than the stream path Plan 5 specifically fixed, because vanilla Redpanda +
+aggressive librdkafka config validation leaves no deterministic way to force
+a poll-time fatal error in a single-file demo. That limitation is documented
+in the demo module Haddock and in the Surprises & Discoveries section of
+this plan. Running `cabal run fatal-error-demo` against a live Redpanda
+broker produces, in under a second, a two-line transcript ending in
+`KafkaError "ssl.ca.location failed: ..."` and exit code 1.

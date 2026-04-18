@@ -75,3 +75,10 @@ executable multi-partition
   hs-source-dirs: app
   main-is:        MultiPartition.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+
+executable fatal-error-demo
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        FatalErrorDemo.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:  containers
