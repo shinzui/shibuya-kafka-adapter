@@ -140,9 +140,17 @@ Observable outcomes at completion:
       tags. Required adding `hs-opentelemetry-api ^>=0.3` as a direct
       build-dep (transitive presence wasn't enough to import
       `OpenTelemetry.Trace.Core` for `getSpanContext`).
-- [ ] Milestone 3: `otel-upstream-probe` jitsurei example — the upstream
-      wrappers directly over raw `hw-kafka-client`, to compare span shape and
-      header handling with Milestone 2.
+- [x] Milestone 3 (2026-04-18): `otel-upstream-probe` lives at
+      `shibuya-kafka-adapter-jitsurei/app/OtelUpstreamProbe.hs`. It uses
+      `OpenTelemetry.Instrumentation.Kafka.pollMessage` directly on a raw
+      `hw-kafka-client` consumer, no Shibuya, no `kafka-effectful`. Run with
+      `OTEL_SERVICE_NAME=otel-upstream-probe`; it loops 10 times against
+      `orders`, polls one record per iteration, and the upstream wrapper
+      opens one `process orders` (kind=Consumer) span per record polled,
+      complete with `messaging.{operation,destination.name,kafka.consumer.group,kafka.destination.partition,kafka.message.key,kafka.message.offset}`
+      tags. The new record produced with
+      `traceparent=00-1c00...abcd-2a00...abcdef-01` shows up in Jaeger
+      with the correct CHILD_OF reference.
 - [ ] Milestone 4: producer-side spike — wrap an outgoing `produceMessage` call
       (either via the upstream `produceMessage` wrapper or via a tiny in-repo
       helper built on `Shibuya.Telemetry.Propagation.injectTraceContext`) and
@@ -216,6 +224,50 @@ Observable outcomes at completion:
                      span.kind=consumer
 
   This is the **baseline** that Milestones 3 and 4 are compared against.
+
+### Milestone 3 (2026-04-18)
+
+- **Upstream `pollMessage` opens a span only on records that were *not*
+  previously polled in the same broker session, but it opens one per
+  successful return regardless of consumer-group state.** First run polled
+  both records on `orders` (the one from M2 and the one freshly produced
+  for M3) and the wrapper opened a span only for the freshly produced
+  record. The earlier record had already been committed by `otel-demo`'s
+  consumer group, so the upstream-probe's group `otel-upstream-probe`
+  re-read it from `Earliest` — and the wrapper *did* span it. Trace
+  `0af7...` therefore now contains *both*
+  `shibuya.process.message` (from M2) and `process orders` (from M3) as
+  siblings under parent `b7ad6b7169203331`. Trace `1c00...abcd` has just
+  the upstream `process orders` span. Both confirm that **the upstream
+  W3C extractor honours `traceparent` exactly as Shibuya's
+  `extractTraceContext` does**.
+- **Span shape captured for Milestone 5 comparison.** Upstream span
+  `process orders` (kind=Consumer, `otel.scope.name =
+  hs-pntlmtry-nstrmnttn-hw-kfk-clnt v0.1.0.0`) carries seven `messaging.*`
+  tags vs Milestone 2's four:
+
+  | Attribute                                  | Milestone 2 (Shibuya) | Milestone 3 (upstream) |
+  | ------------------------------------------ | --------------------- | ---------------------- |
+  | `messaging.system`                         | `kafka` (set by demo) | (absent)               |
+  | `messaging.operation`                      | (absent)              | `process`              |
+  | `messaging.destination.name`               | `orders`              | `orders`               |
+  | `messaging.destination.partition.id`       | `0`                   | (absent)               |
+  | `messaging.kafka.destination.partition`    | (absent)              | `0`                    |
+  | `messaging.message.id`                     | `orders-0-0`          | (absent)               |
+  | `messaging.kafka.message.offset`           | (absent)              | `1`                    |
+  | `messaging.kafka.message.key`              | (absent)              | `k2`                   |
+  | `messaging.kafka.consumer.group`           | (absent)              | `otel-upstream-probe`  |
+
+  The two stacks pick **different** OTel attribute names for the same
+  concept (`destination.partition.id` vs `kafka.destination.partition`).
+  Shibuya emits the (now-stable) v1.27 messaging-conventions key; the
+  upstream library emits the older Kafka-namespaced key. This is the
+  single largest gap to flag in Milestone 5.
+- **librdkafka IPv6 fallback noise reappears on every run.** Two
+  `Connect to ipv6#[::1]:9092 failed` warnings precede every successful
+  poll. Same noise documented in Plan 7's retrospective; the upstream
+  probe shows it more clearly because it does not suppress librdkafka
+  logs.
 
 
 ## Decision Log

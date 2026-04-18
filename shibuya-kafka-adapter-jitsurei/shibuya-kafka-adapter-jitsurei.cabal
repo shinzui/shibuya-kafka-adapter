@@ -96,3 +96,9 @@ executable otel-demo
   hs-source-dirs: app
   main-is:        OtelDemo.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+
+executable otel-upstream-probe
+  import:         warnings, common-deps
+  hs-source-dirs: app
+  main-is:        OtelUpstreamProbe.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
