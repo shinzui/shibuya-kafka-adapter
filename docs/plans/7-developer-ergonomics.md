@@ -263,10 +263,13 @@ Tear down:
       `dependencies` list. (2026-04-18)
 - [x] Milestone 4: `mori show --full` no longer lists `hs-opentelemetry`.
       (2026-04-18 — `Dependencies (7)` block now ends at `Bodigrim/tasty-bench`)
-- [ ] Milestone 5: `just process-up` / `create-topics` / `build` / `test` /
-      `bench` / `fmt` all succeed.
-- [ ] Milestone 5: Teardown with `just delete-topics` / `process-down`
-      succeeds.
+- [x] Milestone 5: `just process-up` / `create-topics` / `build` / `test` /
+      `bench` / `fmt` all succeed. (2026-04-18 — 23 tests passed in 20.32s,
+      15 benchmarks completed in 34.20s; bench numbers within noise of
+      `shibuya-kafka-adapter-bench/baseline.csv`)
+- [x] Milestone 5: Teardown with `just delete-topics` / `process-down`
+      succeeds. (2026-04-18 — all four topics deleted; `process-down`
+      returns 0 via `|| true` guard)
 
 
 ## Surprises & Discoveries
@@ -295,6 +298,22 @@ had been redundant for a while and were only surfaced by the stricter set:
 `IORef` type name, `Eff`/`IOE`/`(:>)` from `Effectful`, `Error` from
 `Effectful.Error.Static`, and `KafkaConsumer` from `Kafka.Effectful.Consumer`.
 All removed.
+
+`just process-up` returned immediately on this machine: process-compose
+reported `Found an existing cluster` (node 0 already running on
+`127.0.0.1:9092`) and exited rather than supervising the broker. This did
+not block Milestone 5 — the broker was reachable and the test suite passed
+against it — but a user on a cold machine should see the expected
+"starting Redpanda" output instead. The corresponding `just process-down`
+therefore fell through the `|| true` guard because no process-compose
+socket existed to talk to. Both outcomes are acceptable but worth knowing.
+
+`librdkafka` emits `Connect to ipv6#[::1]:9092 failed: Connection refused`
+while establishing each consumer/producer in the test suite. These are
+benign: the broker listens on IPv4 `127.0.0.1:9092`, librdkafka tries IPv6
+first, falls back to IPv4, and succeeds. No test failed as a result. Left
+as-is; silencing requires either broker config or a librdkafka log-level
+change outside this plan's scope.
 
 
 ## Decision Log
@@ -325,4 +344,37 @@ All removed.
 
 ## Outcomes & Retrospective
 
-To be filled in on completion.
+Completed on 2026-04-18 in a single session. All five milestones landed as
+independent commits on `master`, each carrying `ExecPlan:` and `Intention:`
+trailers.
+
+What the repository gained:
+
+* `Justfile` at the root with `services`, `kafka`, and `build` groups.
+  `just --list` prints a curated menu; the recipe names match the sibling
+  `hw-kafka-streamly` repo so that cognitive load across related Kafka
+  repositories stays low.
+* The three cabal files (`shibuya-kafka-adapter`, `-bench`, `-jitsurei`)
+  now share the `kafka-effectful` warning set verbatim: a warning that
+  surfaces in one sibling package surfaces here. Three redundant
+  constraints (`IOE` on `kafkaSource`; `Error KafkaError` on `mkAckHandle`
+  and `mkIngested`) and four unused imports in `TestEnv.hs` were removed
+  as part of the alignment.
+* `README.md` now documents the partition-EOF caveat of `skipNonFatal`
+  with a concrete pointer to `Kafka.Streamly.Source.skipNonFatalExcept`
+  for users who need EOF observation, and a Development section pointing
+  at the Justfile.
+* `mori.dhall` no longer lists the stale `iand675/hs-opentelemetry`
+  dependency; `mori show --full` reports the `Dependencies (7)` block
+  ending at `Bodigrim/tasty-bench`.
+
+Validation: 23/23 tests passed (20.32s) against a live Redpanda broker,
+15/15 benchmarks within noise of `baseline.csv`, `cabal build all`
+emits no warnings under the stricter set, `nix fmt` is idempotent,
+`just --list` renders as expected.
+
+Lessons: the warning alignment surfaced two redundancies that Plan 5's
+focused scope had not caught (`mkAckHandle`, `mkIngested`) plus a handful
+of test-file import drift. Stricter warning flags are a cheap forcing
+function for this kind of cleanup; recommend applying the same pattern
+to other sibling repos if not already done.
