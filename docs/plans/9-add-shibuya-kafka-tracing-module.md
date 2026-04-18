@@ -96,8 +96,9 @@ both.
       `traceparent`, run the demo, query Jaeger) that the output is
       identical — same span name, same kind, same attributes, same
       `CHILD_OF` reference. Document the diff in Surprises &
-      Discoveries. (Jaeger runtime verification deferred to manual
-      check; static acceptance met — see Surprises entry below.)
+      Discoveries. (Runtime Jaeger recipe executed 2026-04-18 and
+      matches the Plan 8 baseline byte-for-byte; see Surprises entry
+      below.)
 - [x] Milestone 4 (2026-04-18): Document the new module in `README.md`
       and in the cabal description, if appropriate. Update the
       changelog if the project keeps one. Bump `shibuya-kafka-adapter`'s
@@ -152,14 +153,26 @@ trace shape (Plan 8 Milestone 2 baseline: one Consumer-kind
 0af7651916cd43dd8448eb211c80319c/b7ad6b7169203331` and the four
 messaging attributes) remains the authoritative end-to-end check.
 
-Runtime Jaeger verification against the Plan 8 Milestone 2 recipe was
-**not executed in this session** — `just process-up` (Redpanda +
-Jaeger) is an interactive, long-running spin-up outside this agent's
-scope. The four Milestone 2 unit tests cover the same logical paths
-(parent linkage, root span on absent parent, four-attribute
-population, ack passthrough) and all pass; the build target
-`shibuya-kafka-adapter-jitsurei:otel-demo` compiles clean. Re-running
-the Jaeger recipe end-to-end is a follow-up manual step.
+Runtime Jaeger verification (2026-04-18): `just process-up` brought
+up Redpanda + Jaeger, the record
+`traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01`
+was produced to `orders`, and `cabal run otel-demo` drove one message
+through `traced`. Jaeger's `/api/traces/0af7651916cd43dd8448eb211c80319c`
+returns one span matching the Plan 8 Milestone 2 baseline on every
+dimension the acceptance criterion names:
+
+    operationName: shibuya.process.message
+    span.kind:     consumer
+    references:    CHILD_OF 0af7651916cd43dd8448eb211c80319c/b7ad6b7169203331
+    tags:          messaging.system=kafka
+                   messaging.destination.name=orders
+                   messaging.destination.partition.id=0
+                   messaging.message.id=orders-0-0
+                   otel.scope.name=shibuya-kafka-adapter-jitsurei
+
+The refactored demo thus produces the same trace shape as the
+pre-refactor Plan 8 demo, confirming that `traced` is a true
+behaviour-preserving substitution for the old per-record stanza.
 
 
 ## Decision Log
@@ -288,14 +301,15 @@ reason to revisit that choice.
 
 **Known gaps and follow-ups.**
 
-- **Jaeger runtime verification was deferred.** Plan Milestone 3's
-  step 5 ("`cabal run otel-demo` and see the same Jaeger trace shape
-  as Plan 8 Milestone 2") was not executed in this implementation
-  session because `just process-up` (Redpanda + Jaeger spin-up) is
-  interactive and outside this agent's scope. The unit tests cover
-  the same logical shape (span parent, attributes, ack passthrough)
-  and the build compiles clean, so the risk is low; re-running the
-  recipe end-to-end remains a manual follow-up step.
+- **Jaeger runtime verification executed.** The Plan 8 Milestone 2
+  recipe (`just process-up`, produce with known traceparent,
+  `cabal run otel-demo`, query Jaeger) was driven end-to-end on
+  2026-04-18. Jaeger returned exactly one
+  `shibuya.process.message` (kind=consumer) span under trace
+  `0af7651916cd43dd8448eb211c80319c`, `CHILD_OF b7ad6b7169203331`,
+  with the four `messaging.*` attributes matching the recorded
+  baseline byte-for-byte. See Milestone 3 refactor diff above for
+  the captured tag dump.
 - **The span wraps only `finalize`, not the handler's work before
   `finalize` is called.** This is a direct consequence of `traced`
   being upstream of the user handler in the stream: once the handler
