@@ -77,7 +77,7 @@ both.
       cabal does not let us import from a transitively-present
       package, as Plan 8 Milestone 2 confirmed). Verify
       `cabal build all` is clean.
-- [ ] Milestone 2: Create
+- [x] Milestone 2 (2026-04-18): Create
       `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Tracing.hs`
       with the `traced` stream transformer. Add it to the cabal
       `exposed-modules`. Write a unit test
@@ -151,6 +151,25 @@ explicitly.)
   the upstream library uses. Rationale: stable framework-prefixed
   name lets dashboard authors filter on a single string regardless of
   topic count.
+  Date: 2026-04-18
+
+- Decision: Resolve Milestone 2's design question in favour of option
+  (A) — `traced :: TopicName -> Stream ... -> Stream ...`. The caller
+  passes the topic name explicitly; `traced` does not parse it back
+  out of `MessageId`. Rationale: every realistic caller already has
+  the topic name in scope from the adapter configuration, so the
+  parameter is effectively free, and it sidesteps the fragility of
+  splitting `"<topic>-<partition>-<offset>"` when a topic name itself
+  contains dashes. This is the resolution the plan pre-authorized.
+  Date: 2026-04-18
+
+- Decision: Tests inline a ~15-line in-memory `SpanProcessor` rather
+  than depending on `hs-opentelemetry-exporter-in-memory`. Rationale:
+  the current Hackage release (0.0.1.4) pins `hs-opentelemetry-api
+  <0.3`, incompatible with this repository's resolved 0.3.1.0. The
+  inlined processor mirrors `inMemoryListExporter` exactly (append to
+  `IORef [ImmutableSpan]` on span end) and keeps the test footprint
+  self-contained.
   Date: 2026-04-18
 
 

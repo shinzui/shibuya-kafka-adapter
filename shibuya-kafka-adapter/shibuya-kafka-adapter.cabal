@@ -39,6 +39,7 @@ library
     Shibuya.Adapter.Kafka.Config
     Shibuya.Adapter.Kafka.Convert
     Shibuya.Adapter.Kafka.Internal
+    Shibuya.Adapter.Kafka.Tracing
 
   default-extensions:
     DeriveAnyClass
@@ -93,12 +94,15 @@ test-suite shibuya-kafka-adapter-test
     Shibuya.Adapter.Kafka.AdapterTest
     Shibuya.Adapter.Kafka.ConvertTest
     Shibuya.Adapter.Kafka.IntegrationTest
+    Shibuya.Adapter.Kafka.TracingTest
 
   build-depends:
+    , async                  ^>=2.2
     , base                   ^>=4.21.0.0
     , bytestring
     , containers
     , effectful-core
+    , hs-opentelemetry-api   ^>=0.3
     , hw-kafka-client
     , kafka-effectful
     , process
