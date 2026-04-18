@@ -80,7 +80,6 @@ in  Schema.Project::{ project =
       , "haskell-works/hw-kafka-client"
       , "confluentinc/librdkafka"
       , "Bodigrim/tasty-bench"
-      , "iand675/hs-opentelemetry"
       ]
     , agents =
       [ Schema.AgentHint::{ role = "adapter-dev"

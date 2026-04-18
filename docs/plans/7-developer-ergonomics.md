@@ -259,9 +259,10 @@ Tear down:
       (2026-04-18)
 - [x] Milestone 3: Add a Development/Justfile pointer to `README.md`.
       (2026-04-18)
-- [ ] Milestone 4: Remove `"iand675/hs-opentelemetry"` from `mori.dhall`'s
-      `dependencies` list.
-- [ ] Milestone 4: `mori show --full` no longer lists `hs-opentelemetry`.
+- [x] Milestone 4: Remove `"iand675/hs-opentelemetry"` from `mori.dhall`'s
+      `dependencies` list. (2026-04-18)
+- [x] Milestone 4: `mori show --full` no longer lists `hs-opentelemetry`.
+      (2026-04-18 — `Dependencies (7)` block now ends at `Bodigrim/tasty-bench`)
 - [ ] Milestone 5: `just process-up` / `create-topics` / `build` / `test` /
       `bench` / `fmt` all succeed.
 - [ ] Milestone 5: Teardown with `just delete-topics` / `process-down`
