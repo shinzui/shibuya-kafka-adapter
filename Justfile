@@ -17,6 +17,16 @@ process-up:
 process-down:
     process-compose --unix-socket .dev/process-compose.sock down || true
 
+# Open the Jaeger UI in the default browser (jaeger is started by `process-up`)
+[group("services")]
+jaeger-ui:
+    open http://localhost:16686
+
+# Tail jaeger logs (process-compose combined stream)
+[group("services")]
+jaeger-logs:
+    process-compose --unix-socket .dev/process-compose.sock process logs jaeger -f
+
 
 # --- Kafka (rpk) ---
 

@@ -17,3 +17,17 @@ processes:
       failure_threshold: 10
     availability:
       restart: on_failure
+
+  jaeger:
+    command: jaeger --config=file:.dev/jaeger-config.yaml
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: 16686
+        path: /
+      initial_delay_seconds: 2
+      period_seconds: 2
+      timeout_seconds: 2
+      failure_threshold: 15
+    availability:
+      restart: on_failure
