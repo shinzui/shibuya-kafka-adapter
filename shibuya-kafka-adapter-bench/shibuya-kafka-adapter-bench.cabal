@@ -1,6 +1,6 @@
 cabal-version: 3.12
 name:          shibuya-kafka-adapter-bench
-version:       0.1.0.0
+version:       0.2.0.0
 synopsis:      Benchmarks for shibuya-kafka-adapter conversion functions
 description:
   Micro-benchmarks for the pure conversion hot path in shibuya-kafka-adapter:
