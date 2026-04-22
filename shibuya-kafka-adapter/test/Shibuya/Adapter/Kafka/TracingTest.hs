@@ -21,8 +21,9 @@ import Data.Text (Text)
 import Data.Text.Encoding qualified as TE
 import Effectful (Eff, IOE, liftIO, runEff, (:>))
 import Kafka.Types (TopicName (..))
-import OpenTelemetry.Attributes (Attribute (..), PrimitiveAttribute (..), lookupAttribute)
+import OpenTelemetry.Attributes (Attribute (..), PrimitiveAttribute (..), lookupAttribute, unkey)
 import OpenTelemetry.Processor.Span (ShutdownResult (..), SpanProcessor (..))
+import OpenTelemetry.SemanticConventions qualified as Sem
 import OpenTelemetry.Trace.Core (
     ImmutableSpan (..),
     SpanContext (..),
@@ -53,6 +54,7 @@ tests =
         [ testCase "envelope traceparent becomes span parent" testParentedSpan
         , testCase "missing traceContext yields root span" testRootSpan
         , testCase "messaging attributes populated from envelope" testAttributes
+        , testCase "span name follows spec pattern" testSpanName
         , testCase "AckDecision threads through wrapped finalize" testAckPassthrough
         ]
 
@@ -176,6 +178,7 @@ testAttributes = withRecordingTracer $ \spansRef tracer -> do
     case spans of
         [s] -> do
             let attrs = s.spanAttributes
+            -- Generic messaging.* attributes.
             assertEqual
                 "messaging.system"
                 (Just (AttributeValue (TextAttribute "kafka")))
@@ -185,13 +188,36 @@ testAttributes = withRecordingTracer $ \spansRef tracer -> do
                 (Just (AttributeValue (TextAttribute "orders")))
                 (lookupAttribute attrs "messaging.destination.name")
             assertEqual
+                "messaging.operation"
+                (Just (AttributeValue (TextAttribute "process")))
+                (lookupAttribute attrs "messaging.operation")
+            assertEqual
                 "messaging.message.id"
                 (Just (AttributeValue (TextAttribute "orders-2-42")))
                 (lookupAttribute attrs "messaging.message.id")
+            -- Kafka-specific typed attributes (Int64 on the wire).
             assertEqual
-                "messaging.destination.partition.id"
-                (Just (AttributeValue (TextAttribute "2")))
+                "messaging.kafka.destination.partition"
+                (Just (AttributeValue (IntAttribute 2)))
+                (lookupAttribute attrs (unkey Sem.messaging_kafka_destination_partition))
+            assertEqual
+                "messaging.kafka.message.offset"
+                (Just (AttributeValue (IntAttribute 42)))
+                (lookupAttribute attrs (unkey Sem.messaging_kafka_message_offset))
+            -- The deleted pre-alignment key must NOT be present.
+            assertEqual
+                "messaging.destination.partition.id absent"
+                Nothing
                 (lookupAttribute attrs "messaging.destination.partition.id")
+        other -> assertFailure ("expected exactly one span, got " <> show (length other))
+
+testSpanName :: Assertion
+testSpanName = withRecordingTracer $ \spansRef tracer -> do
+    ackRef <- newIORef Nothing
+    runOneThroughTraced tracer (mkEnvelope Nothing) ackRef
+    spans <- readIORef spansRef
+    case spans of
+        [s] -> assertEqual "span name" "orders process" s.spanName
         other -> assertFailure ("expected exactly one span, got " <> show (length other))
 
 testAckPassthrough :: Assertion

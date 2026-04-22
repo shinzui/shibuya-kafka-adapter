@@ -133,7 +133,7 @@ current state of the work.
         the raw text (a defensive path; not expected to fire for
         Kafka-origin envelopes because `mkMessageId` always encodes an
         `Int32`).
--   [ ] M4 — Update the Haddock on `Shibuya.Adapter.Kafka.Tracing` and
+-   [x] M4 — Update the Haddock on `Shibuya.Adapter.Kafka.Tracing` and
     the test
     `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/TracingTest.hs`:
     -   Update the module-level Haddock to describe the new span name
