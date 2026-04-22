@@ -12,7 +12,7 @@ Integrates with Apache Kafka via [`kafka-effectful`](https://github.com/shinzui/
 
 ## Tracing (opt-in)
 
-`Shibuya.Adapter.Kafka.Tracing.traced` is an opt-in stream transformer that wraps each emitted `Ingested` so that the downstream handler's eventual `finalize` call runs inside a Consumer-kind `shibuya.process.message` OpenTelemetry span. The span inherits the envelope's W3C `traceparent` as parent (from `Envelope.traceContext`) or opens a fresh root span when no parent is present, and is populated with the v1.27 messaging-conventions attributes (`messaging.system=kafka`, `messaging.destination.name`, `messaging.message.id`, and `messaging.destination.partition.id` when the partition is known). A caller that does not import this module pays nothing — no spans are opened and the adapter's public surface is unchanged.
+`Shibuya.Adapter.Kafka.Tracing.traced` is an opt-in stream transformer that wraps each emitted `Ingested` so that the downstream handler's eventual `finalize` call runs inside a Consumer-kind OpenTelemetry span named following the messaging convention `"<destination> <operation>"` — e.g. `"orders process"` for a topic named `orders`. The span inherits the envelope's W3C `traceparent` as parent (from `Envelope.traceContext`) or opens a fresh root span when no parent is present, and is populated with the spec-aligned messaging attributes (`messaging.system=kafka`, `messaging.destination.name`, `messaging.operation=process`, `messaging.message.id`) and the Kafka-specific typed attributes `messaging.kafka.destination.partition` (Int64) and `messaging.kafka.message.offset` (Int64) when available. A caller that does not import this module pays nothing — no spans are opened and the adapter's public surface is unchanged.
 
 Typical wiring:
 

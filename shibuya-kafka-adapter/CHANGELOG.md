@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0.0 — 2026-04-22
+
+Telemetry wire-format change. No Haskell API break —
+`Shibuya.Adapter.Kafka.Tracing.traced`'s signature is unchanged — but
+operators with dashboards filtering on the old attribute-key strings
+or span name must update their queries.
+
+### Changed
+
+- Per-message spans now follow the OpenTelemetry messaging
+  semantic-conventions span-name pattern `"<destination> <operation>"`,
+  yielding e.g. `"orders process"` in place of the previous constant
+  `"shibuya.process.message"`.
+- The `messaging.operation` attribute is now set to `"process"` on
+  every consumer span.
+- The Kafka partition is now emitted as the typed Kafka-specific key
+  `messaging.kafka.destination.partition` (Int64), replacing the
+  never-defined `messaging.destination.partition.id` (Text). If the
+  envelope's partition text does not parse as an integer, the
+  shibuya-namespaced `shibuya.partition` is emitted as a defensive
+  fallback.
+- The Kafka offset is now emitted as `messaging.kafka.message.offset`
+  (Int64), derived from `Envelope.cursor` when it is a `CursorInt`.
+
+### Aligned with
+
+- `Shibuya.Telemetry.Semantic` as of sibling `shibuya` plan 2
+  (`docs/plans/2-align-opentelemetry-semantic-conventions.md` in the
+  shibuya repo). Attribute keys for the generic `messaging.*`
+  namespace are sourced from that module, which in turn derives them
+  from typed `AttributeKey` values in
+  `OpenTelemetry.SemanticConventions`.
+- `OpenTelemetry.SemanticConventions` (new direct `build-depends`)
+  for the typed Kafka-specific keys
+  `messaging_kafka_destination_partition` and
+  `messaging_kafka_message_offset`.
+
 ## 0.2.0.0 — 2026-04-18
 
 Additive release. Adds one new exposed module, no changes to existing

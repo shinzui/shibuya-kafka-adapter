@@ -147,12 +147,12 @@ current state of the work.
         expected value is `42`.
     -   Add a new case `"span name follows spec pattern"` asserting
         `s.spanName == "orders process"`.
--   [ ] M5 — Re-run the Plan 9 Milestone 3 Jaeger verification recipe
+-   [x] M5 — Re-run the Plan 9 Milestone 3 Jaeger verification recipe
     end-to-end and record the new tag dump in Surprises & Discoveries.
     Confirm the span name equals `"orders process"`, the parent linkage
     is preserved byte-for-byte, and the attribute set matches the new
     expectation.
--   [ ] M6 — Bump `shibuya-kafka-adapter.cabal`'s `version: 0.2.0.0` to
+-   [x] M6 — Bump `shibuya-kafka-adapter.cabal`'s `version: 0.2.0.0` to
     `0.3.0.0`. Add a `## 0.3.0.0` entry to
     `shibuya-kafka-adapter/CHANGELOG.md` describing the wire-format
     change and calling out the breaking nature for dashboard
@@ -168,7 +168,43 @@ current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered
 during implementation. Provide concise evidence.
 
-(None yet.)
+-   **M5 Jaeger tag dump (2026-04-22).** Ran the recipe against the
+    local process-compose stack. Produced one record at offset 5 with
+    `traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01`
+    and advanced the `otel-demo-group` consumer through the backlog
+    until the just-produced record was consumed. Jaeger's
+    `/api/traces/0af7651916cd43dd8448eb211c80319c` returned two spans
+    under this trace id (offset 4 from a Plan 9 run and offset 5 from
+    this run); both are named `"orders process"` and are children of
+    `b7ad6b7169203331`. The latest span's tags, in full:
+
+        operationName: "orders process"
+        refs:          [CHILD_OF 0af7651916cd43dd8448eb211c80319c / b7ad6b7169203331]
+        tags:
+          messaging.system                       = "kafka"
+          messaging.destination.name             = "orders"
+          messaging.operation                    = "process"     (NEW)
+          messaging.message.id                   = "orders-0-5"
+          messaging.kafka.destination.partition  = 0  (int64)    (NEW, typed)
+          messaging.kafka.message.offset         = 5  (int64)    (NEW, typed)
+          span.kind                              = "consumer"
+          otel.scope.name                        = "shibuya-kafka-adapter-jitsurei"
+          (plus code.* / thread.id auto-attributes)
+
+    `messaging.destination.partition.id` is absent, as required.
+    Deviation from plan's expected baseline: the offset is 5, not 0,
+    because the local `orders` topic already carried five Plan-9-era
+    messages. The shape of the output is otherwise an exact match.
+
+-   **Consumer-group offset advancement.** The `otel-demo` binary only
+    consumes a single message per invocation, and the `otel-demo-group`
+    consumer group tracks committed offsets across runs. To consume the
+    specific record that was just produced, `cabal run otel-demo` had
+    to be invoked five times in a row to walk the group through the
+    pre-existing backlog. Not a blocker — Jaeger records one span per
+    consumed message, so both the old Plan 9 span and the new
+    post-alignment span share the trace id and both carry the new
+    wire format.
 
 
 ## Decision Log
