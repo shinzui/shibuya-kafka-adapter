@@ -107,7 +107,7 @@ current state of the work.
     already via shibuya-core 0.2.0.0), so no `cabal.project` change
     is needed — just an explicit edge per the same lesson from plan 9
     M1 (transitive presence is not enough to import from).
--   [ ] M3 — Refactor
+-   [x] M3 — Refactor
     `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Tracing.hs` to
     emit the spec-aligned wire format:
     -   Import `processSpanName`, `attrMessagingOperation`, and
