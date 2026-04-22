@@ -100,7 +100,7 @@ current state of the work.
     fails on the two now-missing symbols (`processMessageSpanName`,
     `attrMessagingDestinationPartitionId`) — the failure is the
     evidence that the new `Semantic` is in scope.
--   [ ] M2 — Add `hs-opentelemetry-semantic-conventions ^>=0.1` to
+-   [x] M2 — Add `hs-opentelemetry-semantic-conventions ^>=0.1` to
     both the `library` and `test-suite` `build-depends` stanzas in
     `shibuya-kafka-adapter/shibuya-kafka-adapter.cabal`. The package
     is on Hackage (`0.1.0.0`, transitively present in the closure

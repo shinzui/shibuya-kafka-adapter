@@ -53,20 +53,21 @@ library
     QuasiQuotes
 
   build-depends:
-    , base                  ^>=4.21.0.0
-    , bytestring            ^>=0.12
-    , containers            ^>=0.7
-    , effectful-core        ^>=2.6.1.0
-    , hs-opentelemetry-api  ^>=0.3
-    , hw-kafka-client       >=5.3       && <6
-    , hw-kafka-streamly     ^>=0.1
-    , kafka-effectful       ^>=0.1
-    , shibuya-core          ^>=0.2
-    , stm                   ^>=2.5
-    , streamly              ^>=0.11
-    , streamly-core         ^>=0.3
-    , text                  ^>=2.1
-    , time                  ^>=1.14
+    , base                                   ^>=4.21.0.0
+    , bytestring                             ^>=0.12
+    , containers                             ^>=0.7
+    , effectful-core                         ^>=2.6.1.0
+    , hs-opentelemetry-api                   ^>=0.3
+    , hs-opentelemetry-semantic-conventions  ^>=0.1
+    , hw-kafka-client                        >=5.3       && <6
+    , hw-kafka-streamly                      ^>=0.1
+    , kafka-effectful                        ^>=0.1
+    , shibuya-core                           ^>=0.2
+    , stm                                    ^>=2.5
+    , streamly                               ^>=0.11
+    , streamly-core                          ^>=0.3
+    , text                                   ^>=2.1
+    , time                                   ^>=1.14
 
   hs-source-dirs:     src
   default-language:   GHC2024
@@ -97,12 +98,13 @@ test-suite shibuya-kafka-adapter-test
     Shibuya.Adapter.Kafka.TracingTest
 
   build-depends:
-    , async                  ^>=2.2
-    , base                   ^>=4.21.0.0
+    , async                                  ^>=2.2
+    , base                                   ^>=4.21.0.0
     , bytestring
     , containers
     , effectful-core
-    , hs-opentelemetry-api   ^>=0.3
+    , hs-opentelemetry-api                   ^>=0.3
+    , hs-opentelemetry-semantic-conventions  ^>=0.1
     , hw-kafka-client
     , kafka-effectful
     , process
@@ -112,7 +114,7 @@ test-suite shibuya-kafka-adapter-test
     , stm
     , streamly
     , streamly-core
-    , tasty                  ^>=1.5
-    , tasty-hunit            ^>=0.10
+    , tasty                                  ^>=1.5
+    , tasty-hunit                            ^>=0.10
     , text
     , time
