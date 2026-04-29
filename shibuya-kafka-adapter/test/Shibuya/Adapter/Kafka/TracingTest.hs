@@ -101,6 +101,7 @@ mkEnvelope tc =
         , partition = Just "2"
         , enqueuedAt = Nothing
         , traceContext = tc
+        , attempt = Nothing
         , payload = ()
         }
 

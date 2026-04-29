@@ -35,6 +35,7 @@ Field mapping:
 * @partition@: @Just (show partitionId)@
 * @enqueuedAt@: converted from Kafka timestamp if available
 * @traceContext@: extracted from @traceparent@/@tracestate@ headers
+* @attempt@: 'Nothing' (Kafka does not expose a redelivery counter)
 * @payload@: the @crValue@ field (@Maybe ByteString@)
 -}
 consumerRecordToEnvelope ::
@@ -47,6 +48,7 @@ consumerRecordToEnvelope cr =
         , partition = Just (Text.pack (show (unPartitionId cr.crPartition)))
         , enqueuedAt = timestampToUTCTime cr.crTimestamp
         , traceContext = extractTraceHeaders cr.crHeaders
+        , attempt = Nothing
         , payload = cr.crValue
         }
 

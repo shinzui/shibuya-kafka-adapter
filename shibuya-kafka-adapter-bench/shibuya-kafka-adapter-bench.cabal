@@ -1,6 +1,6 @@
 cabal-version: 3.12
 name:          shibuya-kafka-adapter-bench
-version:       0.2.0.0
+version:       0.4.0.0
 synopsis:      Benchmarks for shibuya-kafka-adapter conversion functions
 description:
   Micro-benchmarks for the pure conversion hot path in shibuya-kafka-adapter:
@@ -56,7 +56,7 @@ benchmark shibuya-kafka-adapter-bench
     , deepseq
     , hw-kafka-client        >=5.3       && <6
     , hw-kafka-streamly      ^>=0.1
-    , shibuya-core           ^>=0.1.0.0
+    , shibuya-core           ^>=0.4
     , shibuya-kafka-adapter
     , streamly               ^>=0.11
     , streamly-core          ^>=0.3

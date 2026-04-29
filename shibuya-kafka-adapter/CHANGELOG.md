@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0.0 — 2026-04-29
+
+### Breaking Changes
+
+- Tracks the `shibuya-core 0.4.0.0` release, which adds an
+  `attempt :: !(Maybe Attempt)` field to the `Envelope` record
+  exported from `Shibuya.Core.Types`. The adapter's
+  `consumerRecordToEnvelope` now sets this field to `Nothing`,
+  consistent with the upstream guidance that adapters which cannot
+  observe broker-side redeliveries (e.g. Kafka) report `Nothing`.
+  Downstream code that pattern-matches on `Envelope` with positional
+  patterns or with non-punned record patterns that name every field
+  must be updated.
+
+### Other Changes
+
+- Bumps the `shibuya-core` build-depends pin to `^>=0.4` in all three
+  packages of this repo.
+- Drops three orphan `NFData` instances (`MessageId`, `Cursor`,
+  `Envelope a`) from `shibuya-kafka-adapter-bench/bench/Main.hs`;
+  these instances have been provided upstream by `shibuya-core` since
+  `0.2.0.0` and the orphans had become duplicate-instance hazards
+  whenever the bench resolved against a `shibuya-core` newer than
+  `0.1`.
+- `shibuya-kafka-adapter-bench` and `shibuya-kafka-adapter-jitsurei`
+  are re-released at `0.4.0.0` to track the shared version of this
+  repo; neither has user-visible changes of its own.
+
 ## 0.3.0.0 — 2026-04-22
 
 Telemetry wire-format change. No Haskell API break —

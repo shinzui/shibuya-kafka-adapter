@@ -13,15 +13,9 @@ import Shibuya.Adapter.Kafka.Convert (
     extractTraceHeaders,
     timestampToUTCTime,
  )
-import Shibuya.Core.Types (Cursor, Envelope, MessageId)
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, nf, nfIO)
-
--- Orphan NFData instances for shibuya-core types (derive via Generic)
-deriving anyclass instance NFData MessageId
-deriving anyclass instance NFData Cursor
-deriving anyclass instance (NFData a) => NFData (Envelope a)
 
 -- Orphan NFData instances for hw-kafka-client types (derive via Generic)
 deriving anyclass instance NFData TopicName
