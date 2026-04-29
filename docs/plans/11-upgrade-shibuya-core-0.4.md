@@ -72,9 +72,11 @@ After this plan, a user can:
       and the pure tasty groups (`Adapter`, `Convert`, `Tracing`) of
       `cabal test shibuya-kafka-adapter`, and capture green output in
       this plan. _2026-04-29: build green, 23/23 pure tests pass, all 15 bench rows OK._
-- [ ] Run the full `cabal test shibuya-kafka-adapter` (including the
+- [x] Run the full `cabal test shibuya-kafka-adapter` (including the
       `Integration` tasty group) once Redpanda is reachable on
-      `127.0.0.1:9092`. _Deferred — see Surprises & Discoveries._
+      `127.0.0.1:9092`. _2026-04-29: brought up Colima for Docker, ran
+      `just process-up` + `just create-topics`, all 28 tests pass
+      (Adapter 2, Convert 16, Integration 5, Tracing 5)._
 - [x] Commit with Conventional-Commits message
       (`feat!: upgrade to shibuya-core 0.4.0.0 and bump to 0.4.0.0`),
       including both `ExecPlan:` and `Intention:` trailers. _2026-04-29_
@@ -184,9 +186,11 @@ Concrete outcomes vs. acceptance criteria from Milestone 1:
 
 * `cabal build all` exits 0. ✅
 * `python3 ... plan.json` reports `[('shibuya-core', '0.4.0.0')]`. ✅
-* `cabal test --test-options='-p !/Integration/'` reports all 23
-  cases across `Adapter`, `Convert`, `Tracing` as `OK`. ✅ for the
-  three pure groups; ⏸ for `Integration` — see Surprises.
+* `cabal test shibuya-kafka-adapter` reports all 28 cases across
+  `Adapter` (2), `Convert` (16), `Integration` (5), and `Tracing` (5)
+  as `OK`. ✅ Initial run was filtered with
+  `--test-options='-p !/Integration/'` because Docker was down; the
+  full run was re-executed once Colima was started.
 * `cabal bench shibuya-kafka-adapter-bench` prints the full
   `tasty-bench` table (15 rows including `ConsumerRecord to Envelope /
   with trace headers` and `... / without trace headers`) and exits 0. ✅
