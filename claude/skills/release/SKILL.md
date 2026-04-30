@@ -176,10 +176,16 @@ for review before committing.
   - Integration tests require Redpanda (started via `just
     process-up`). If the dev stack isn't running, ask the user before
     skipping — do not silently skip.
-- Run `nix build` to confirm nix's haskell infrastructure can build
-  the package (this flake exposes `packages.default =
-  haskellPackages.shibuya-kafka-adapter`).
 - Run `nix flake check` to verify treefmt and pre-commit checks pass.
+  - The flake intentionally does **not** expose
+    `packages.default` — building the Haskell package itself is
+    `cabal build all`'s job. The flake only carries the dev shell,
+    formatter, and the formatting + pre-commit checks. Don't add a
+    `packages.default` overlay back unless someone is willing to
+    maintain `callHackageDirect` overrides for `shibuya-core`,
+    `kafka-effectful`, `hw-kafka-streamly`,
+    `hs-opentelemetry-semantic-conventions`, plus `streamly` /
+    `streamly-core` bumps.
   - Note: newly created files must be `git add`-ed before nix
     evaluation will see them (nix uses the git tree).
   - If any check fails, fix the issue before proceeding.
