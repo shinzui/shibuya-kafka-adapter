@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.5.0.0 — 2026-05-05
+
+### Breaking Changes
+
+- Tracks the `shibuya-core 0.5.0.0` release, which adds an
+  `attributes :: !(HashMap Text Attribute)` field to the `Envelope`
+  record exported from `Shibuya.Core.Types`. The adapter's
+  `consumerRecordToEnvelope` now populates this field with
+  Kafka-typed OpenTelemetry attributes:
+  `messaging.system="kafka"` (overrides the framework default of
+  `"shibuya"`), the typed `messaging.kafka.destination.partition`
+  (`Int64`) and `messaging.kafka.message.offset` (`Int64`).
+- The opt-in module `Shibuya.Adapter.Kafka.Tracing` is **deleted**.
+  Its single export `traced :: TopicName -> Stream (Eff es)
+  (Ingested es v) -> Stream (Eff es) (Ingested es v)` opened a
+  duplicate Consumer-kind span per message under `runApp`, with
+  the typed Kafka attributes split across the two spans (see plan
+  9 of the `shinzui/shibuya` repo, Finding F1). The same job is
+  now done by the framework's `processOne`, which reads
+  `Envelope.attributes` and emits exactly one span. Callers that
+  imported `traced` should remove the import and the
+  `traced topic source` step; the rest of the wiring (the
+  `runApp` / `runWithMetrics` integration) is unchanged.
+- The companion test
+  `Shibuya.Adapter.Kafka.TracingTest` is deleted; its assertions
+  (span shape, attribute set, ack passthrough) move into the
+  framework's `Shibuya.Telemetry.SemanticSpec` upstream and into
+  this repo's `Shibuya.Adapter.Kafka.ConvertTest` (the
+  attribute-set assertions, against the envelope produced by
+  `consumerRecordToEnvelope` in isolation).
+
+### Other Changes
+
+- Bumps the `shibuya-core` build-depends pin to `^>=0.5` in all
+  three packages of this repo (`shibuya-kafka-adapter`,
+  `shibuya-kafka-adapter-bench`, `shibuya-kafka-adapter-jitsurei`).
+- The `shibuya-kafka-adapter-jitsurei/app/OtelDemo.hs` example is
+  refactored to drive its message stream through Shibuya's
+  `runWithMetrics`, so the framework's `processOne` opens the
+  per-message span. The pre-deletion `traced` shape opened a
+  sibling span; the new shape emits exactly one Consumer-kind
+  span per message, parented on the producer's `traceparent`
+  when present, carrying the spec-aligned messaging attributes
+  plus the typed `messaging.kafka.*` attributes.
+- `unordered-containers ^>=0.2` is now a direct build-depends of
+  `shibuya-kafka-adapter` (library and test stanzas) since
+  `Convert.hs` constructs the new attribute `HashMap`.
+
 ## 0.4.0.0 — 2026-04-29
 
 ### Breaking Changes

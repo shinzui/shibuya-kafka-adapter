@@ -77,115 +77,54 @@ be documented here, even if it requires splitting a partially completed
 task into two ("done" vs. "remaining"). This section must always
 reflect the actual current state of the work.
 
--   [ ] M1.1 — Add a `cabal.project.local` (gitignored) overriding
-    `shibuya-core` and `shibuya-metrics` to the in-tree sibling
-    `shinzui/shibuya` checkout, so M1/M2/M3 can build and test
-    against the unpublished 0.5.0.0 before publication. Add
-    `cabal.project.local` to this repo's `.gitignore` if not
-    already there.
--   [ ] M1.2 — Audit every direct `Envelope { ... }` record
-    construction in the repo (library, tests, jitsurei, benchmark)
-    and record the call sites that need an `attributes` field added.
-    Expect: `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Convert.hs`'s
-    `consumerRecordToEnvelope` and
-    `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/TracingTest.hs`'s
-    `mkEnvelope`. Anything else discovered is a Surprise.
--   [ ] M1.3 — In
-    `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Convert.hs`,
-    populate `Envelope.attributes` with the spec-aligned and
-    Kafka-specific typed attributes that
-    `Shibuya.Adapter.Kafka.Tracing.populateAttrs` emits today:
-    -   `messaging.system="kafka"` (overrides the framework default
-        `"shibuya"` at `processOne` time);
-    -   `messaging.kafka.destination.partition` (typed `Int64`,
-        from the parsed numeric form of `crPartition`);
-    -   `messaging.kafka.message.offset` (typed `Int64`, from
-        `unOffset crOffset`).
-    Move the typed-attribute-key derivations
-    (`unkey Sem.messaging_kafka_destination_partition` etc.) out of
-    `Tracing.hs` into `Convert.hs`. The destination/operation/
-    message-id attributes stay framework-set (the framework already
-    derives them from `ProcessorId` and `Envelope.messageId`); do
-    not duplicate them in the envelope's attribute map.
--   [ ] M1.4 — Bump the `shibuya-core` build-depends pin in
-    `shibuya-kafka-adapter/shibuya-kafka-adapter.cabal` from
-    `^>=0.4` to `^>=0.5`, and matching pins in the
-    `shibuya-kafka-adapter-bench` cabal file and any
-    `shibuya-kafka-adapter-jitsurei` cabal file. Bump the package's
-    own `version:` from `0.4.0.0` to `0.5.0.0`.
--   [ ] M1.5 — Update
-    `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/ConvertTest.hs`
-    to assert the new attribute set on the envelope produced by
-    `consumerRecordToEnvelope`: `messaging.system="kafka"`,
-    `messaging.kafka.destination.partition` (`Int64`),
-    `messaging.kafka.message.offset` (`Int64`). Drop assertions
-    about attributes that previously lived on the inner `traced`
-    span. Build and run the test with `cabal test
-    shibuya-kafka-adapter-test:unit`.
--   [ ] M2.1 — Delete
-    `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Tracing.hs`.
-    Delete its test
-    `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/TracingTest.hs`.
-    Remove `Shibuya.Adapter.Kafka.Tracing` from the cabal file's
-    `exposed-modules` and `Shibuya.Adapter.Kafka.TracingTest` from
-    the test stanza's `other-modules`. Check that the cabal stanza
-    no longer needs the test-only `unordered-containers` /
-    `hs-opentelemetry-api` / `hs-opentelemetry-semantic-conventions`
-    pins for Tracing-only code paths (they may still be needed by
-    other tests; if so, leave them).
--   [ ] M2.2 — Refactor
-    `shibuya-kafka-adapter-jitsurei/app/OtelDemo.hs` to drop the
-    `import Shibuya.Adapter.Kafka.Tracing (traced)` and the
-    `traced (TopicName topicName) source` step in its stream. The
-    demo now needs to be wired through Shibuya's `runApp` so the
-    framework's `processOne` opens the Consumer-kind span — without
-    that the demo will not emit any per-message span. Two
-    sub-steps:
-    -   Update the per-record fold to use `runApp` (or
-        `runWithMetrics` for the no-supervisor path), with a tiny
-        handler that does nothing more than `pure AckOk`. The
-        adapter's `kafkaAdapter` source supplies envelopes whose
-        `attributes` field already carries the kafka-typed
-        attributes from M1.3, so `processOne` will surface them on
-        its single span without further code in the demo.
-    -   Re-run the Plan 9 / Plan 10 Jaeger recipe (produce a
-        record with a known `traceparent`, run the demo, query
-        Jaeger) and confirm the span shape: one Consumer span
-        named `"<topic> process"` (where `<topic>` is the
-        `ProcessorId`, e.g.  `"orders-consumer process"`), parented
-        on the producer, attributes `messaging.system=kafka`,
-        `messaging.destination.name`, `messaging.operation=process`,
-        `messaging.message.id`, plus the typed
-        `messaging.kafka.*`.  Record the full Jaeger response in
-        Surprises.
--   [ ] M2.3 — Refactor
-    `shibuya-kafka-adapter-jitsurei/app/OtelProducerDemo.hs` if it
-    references the deleted module. (Spot check: the file currently
-    imports `runTracing` from `Shibuya.Telemetry.Effect`; it does
-    not import `Shibuya.Adapter.Kafka.Tracing`. The producer demo
-    should not need refactoring beyond a possible
-    `Envelope.attributes` literal somewhere — verify and document.)
--   [ ] M2.4 — Update
-    `shibuya-kafka-adapter/CHANGELOG.md` with a `0.5.0.0` entry
-    that records: the `shibuya-core` upgrade, the
-    `Shibuya.Adapter.Kafka.Tracing` deletion, the
-    `consumerRecordToEnvelope` new attribute population, and the
-    `Envelope.attributes` field-addition visibility.
--   [ ] M3.1 — Run the local gates: `nix flake check`,
-    `cabal build all`, `cabal test
-    shibuya-kafka-adapter-test:unit`, `cabal bench`. Document any
-    deltas in Surprises (especially benchmark deltas — removing the
-    extra span per message should reduce overhead under
-    `runApp`+tracing scenarios).
--   [ ] M3.2 — Commit. Push the branch. Open a PR (if applicable).
--   [ ] M4 — Outcomes & Retrospective. After
-    `shibuya-core 0.5.0.0` publishes to Hackage (separate
-    operation, outside this repo), revisit `cabal.project.local`
-    and either delete the override (it is already gitignored, so
-    this is purely local hygiene) or leave it for the next
-    cross-repo development cycle. Publish
-    `shibuya-kafka-adapter 0.5.0.0` per the existing release
-    process; update Outcomes with the published-version transcript.
+-   [x] M1.1 — `cabal.project.local` pins
+    `../shibuya/shibuya-core` and `../shibuya/shibuya-metrics`;
+    added to `.gitignore`. Done 2026-05-05.
+-   [x] M1.2 — Audit found two direct `Envelope { ... }`
+    constructions: `Convert.hs::consumerRecordToEnvelope` (library)
+    and `TracingTest.hs::mkEnvelope` (test). The latter goes away
+    with M2.1's deletion of `TracingTest.hs`. Done 2026-05-05.
+-   [x] M1.3 — `consumerRecordToEnvelope` populates
+    `Envelope.attributes` via a new `kafkaSpanAttributes` helper
+    (HashMap of `messaging.system="kafka"`, typed
+    `messaging.kafka.destination.partition`, typed
+    `messaging.kafka.message.offset`). Typed-key derivations
+    (`unkey Sem.messaging_kafka_*`) live in `Convert.hs`. Done
+    2026-05-05.
+-   [x] M1.4 — `shibuya-core` build-depends pin bumped to `^>=0.5`
+    in all three cabal files; package versions bumped to
+    `0.5.0.0`. Done 2026-05-05.
+-   [x] M1.5 — `ConvertTest` gains three new cases asserting
+    `messaging.system="kafka"`,
+    `messaging.kafka.destination.partition` (Int64),
+    `messaging.kafka.message.offset` (Int64) on
+    `consumerRecordToEnvelope`'s output. All 19 unit tests pass.
+    Done 2026-05-05.
+-   [x] M2.1 — `Shibuya.Adapter.Kafka.Tracing` and its
+    `TracingTest` are deleted; cabal `exposed-modules` and the
+    test stanza's `other-modules` updated; `test/Main.hs` no
+    longer references `TracingTest`. `unordered-containers ^>=0.2`
+    promoted to a direct build-depends in both library and test
+    stanzas. Done 2026-05-05.
+-   [x] M2.2 — `OtelDemo.hs` drops the `Shibuya.Adapter.Kafka.Tracing`
+    import and refactors to drive its message stream through
+    Shibuya's `runWithMetrics`. The adapter's `Stream.take
+    messagesToProcess` cap on the underlying source preserves
+    the demo's "consumes N messages then exits" behavior.
+    Per-record handler is one-line `pure AckOk`. Done 2026-05-05.
+    The Jaeger smoke against a live Redpanda is recorded in M3 (it
+    is a runtime check the user runs separately).
+-   [x] M2.3 — `OtelProducerDemo.hs` does not reference the deleted
+    module (verified). No refactor needed. Done 2026-05-05.
+-   [x] M2.4 — `CHANGELOG.md` `0.5.0.0` entry recorded. Done
+    2026-05-05.
+-   [ ] M3.1 — `cabal build all` is green; `cabal test
+    shibuya-kafka-adapter-test --test-options="--pattern Convert"`
+    is green (19/19). `nix flake check` and `cabal bench` not yet
+    run.
+-   [ ] M3.2 — Commit (in progress).
+-   [ ] M4 — Outcomes & Retrospective + publication, after
+    `shibuya-core 0.5.0.0` publishes to Hackage.
 
 
 ## Surprises & Discoveries

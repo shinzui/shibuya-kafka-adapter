@@ -1,5 +1,8 @@
 .envrc
 .pre-commit-config.yaml
 .claude/
+.mina/
+cabal.project.local
 CLAUDE.local.md
 dist-newstyle/
+docs/otel-tracing.md

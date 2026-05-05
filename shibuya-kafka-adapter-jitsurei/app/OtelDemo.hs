@@ -1,12 +1,17 @@
-{- | Adapter + Shibuya Tracing demo, using the in-repo `traced` transformer.
+{- | Adapter + Shibuya tracing demo, driving the message stream
+through Shibuya's @runWithMetrics@ so the framework's @processOne@
+opens the per-message Consumer span. The Kafka adapter's
+'Shibuya.Adapter.Kafka.Convert.consumerRecordToEnvelope' populates
+'Envelope.attributes' with @messaging.system=kafka@ plus the typed
+@messaging.kafka.destination.partition@ and
+@messaging.kafka.message.offset@; the framework merges those onto
+its single per-message span.
 
-This is the Plan 8 Milestone 2 spike after the Plan 9 refactor. The
-per-record @withExtractedContext@ + @withSpan'@ + @addAttribute@ stanza
-has been replaced with a single call to
-'Shibuya.Adapter.Kafka.Tracing.traced', which wraps each ingested
-envelope's 'AckHandle' so that the handler's eventual @finalize@ runs
-inside a Consumer-kind @shibuya.process.message@ span parented on the
-envelope's carried W3C @traceparent@ (when present).
+This replaces the previous use of the @Shibuya.Adapter.Kafka.Tracing.traced@
+stream transformer, which has been deleted (see plan 12 for the
+migration record). The pre-deletion shape opened a duplicate
+sibling span; the new shape emits exactly one Consumer-kind span
+per message.
 
 Spans are exported via the OTel SDK's default OTLP exporter at
 @http://localhost:4318@ — the Jaeger v2 instance started by
@@ -51,13 +56,12 @@ import OpenTelemetry.Trace (
  )
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
-import Shibuya.Adapter.Kafka.Tracing (traced)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
 import Shibuya.Core.Types (Envelope (..))
+import Shibuya.Runner.Metrics (ProcessorId (..))
+import Shibuya.Runner.Supervised (runWithMetrics)
 import Shibuya.Telemetry.Effect (runTracing)
-import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import System.Environment (getArgs, lookupEnv)
 import Text.Read (readMaybe)
@@ -93,19 +97,31 @@ main = do
                         <> noAutoOffsetStore
                 sub = topics [TopicName topicName] <> offsetReset Earliest
             runKafkaConsumer props sub $ do
-                Adapter{source} <- kafkaAdapter (defaultConfig [TopicName topicName])
-                Stream.fold Fold.drain
-                    $ Stream.mapM
-                        ( \Ingested{envelope = env, ack = AckHandle finalize} -> do
-                            liftIO $ TIO.putStrLn $ "[otel-demo] envelope=" <> Text.pack (show env)
-                            liftIO $ case env.traceContext of
-                                Just hdrs -> TIO.putStrLn $ "[otel-demo] envelope traceContext=" <> Text.pack (show hdrs)
-                                Nothing -> TIO.putStrLn "[otel-demo] no trace context on envelope"
-                            finalize AckOk
-                            liftIO $ TIO.putStrLn "[otel-demo] AckOk"
-                        )
-                    $ Stream.take messagesToProcess
-                    $ traced (TopicName topicName) source
+                upstream <- kafkaAdapter (defaultConfig [TopicName topicName])
+                -- Cap the underlying source so the demo terminates.
+                let finiteAdapter =
+                        upstream{source = Stream.take messagesToProcess upstream.source}
+                    handler ingested = do
+                        liftIO $
+                            TIO.putStrLn $
+                                "[otel-demo] envelope="
+                                    <> Text.pack (show ingested.envelope)
+                        liftIO $ case ingested.envelope.traceContext of
+                            Just hdrs ->
+                                TIO.putStrLn $
+                                    "[otel-demo] envelope traceContext="
+                                        <> Text.pack (show hdrs)
+                            Nothing ->
+                                TIO.putStrLn "[otel-demo] no trace context on envelope"
+                        liftIO $ TIO.putStrLn "[otel-demo] AckOk"
+                        pure AckOk
+                _ <-
+                    runWithMetrics
+                        (fromIntegral messagesToProcess)
+                        (ProcessorId topicName)
+                        finiteAdapter
+                        handler
+                pure ()
         case result of
             Left err -> putStrLn $ "[otel-demo] Error: " <> show err
             Right () -> TIO.putStrLn "[otel-demo] Done."

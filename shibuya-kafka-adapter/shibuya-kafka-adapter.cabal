@@ -1,6 +1,6 @@
 cabal-version:   3.12
 name:            shibuya-kafka-adapter
-version:         0.4.0.0
+version:         0.5.0.0
 synopsis:        Kafka adapter for the Shibuya queue processing framework
 description:
   A Shibuya adapter that integrates with Apache Kafka via kafka-effectful
@@ -39,7 +39,6 @@ library
     Shibuya.Adapter.Kafka.Config
     Shibuya.Adapter.Kafka.Convert
     Shibuya.Adapter.Kafka.Internal
-    Shibuya.Adapter.Kafka.Tracing
 
   default-extensions:
     DeriveAnyClass
@@ -62,12 +61,13 @@ library
     , hw-kafka-client                        >=5.3       && <6
     , hw-kafka-streamly                      ^>=0.1
     , kafka-effectful                        ^>=0.1
-    , shibuya-core                           ^>=0.4
+    , shibuya-core                           ^>=0.5
     , stm                                    ^>=2.5
     , streamly                               ^>=0.11
     , streamly-core                          ^>=0.3
     , text                                   ^>=2.1
     , time                                   ^>=1.14
+    , unordered-containers                   ^>=0.2
 
   hs-source-dirs:     src
   default-language:   GHC2024
@@ -95,7 +95,6 @@ test-suite shibuya-kafka-adapter-test
     Shibuya.Adapter.Kafka.AdapterTest
     Shibuya.Adapter.Kafka.ConvertTest
     Shibuya.Adapter.Kafka.IntegrationTest
-    Shibuya.Adapter.Kafka.TracingTest
 
   build-depends:
     , async                                  ^>=2.2
@@ -118,3 +117,4 @@ test-suite shibuya-kafka-adapter-test
     , tasty-hunit                            ^>=0.10
     , text
     , time
+    , unordered-containers                   ^>=0.2

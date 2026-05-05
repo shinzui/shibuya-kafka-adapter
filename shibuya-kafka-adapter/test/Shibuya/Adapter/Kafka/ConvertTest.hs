@@ -1,6 +1,7 @@
 module Shibuya.Adapter.Kafka.ConvertTest (tests) where
 
 import Data.ByteString (ByteString)
+import Data.HashMap.Strict qualified as HashMap
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (..))
 import Kafka.Types (
@@ -10,6 +11,8 @@ import Kafka.Types (
     TopicName (..),
     headersFromList,
  )
+import OpenTelemetry.Attributes (Attribute (..), PrimitiveAttribute (..), unkey)
+import OpenTelemetry.SemanticConventions qualified as Sem
 import Shibuya.Adapter.Kafka.Convert (
     consumerRecordToEnvelope,
     extractTraceHeaders,
@@ -84,6 +87,27 @@ envelopeTests =
             cr = mkRecord (TopicName "t") (PartitionId 0) (Offset 0) NoTimestamp hdrs Nothing Nothing
             env = consumerRecordToEnvelope cr
         assertEqual "traceContext" (Just [("traceparent", "00-abc-def-01")]) env.traceContext
+    , testCase "attributes carry messaging.system=kafka" $ do
+        let cr = mkRecord (TopicName "orders") (PartitionId 2) (Offset 42) NoTimestamp mempty Nothing Nothing
+            env = consumerRecordToEnvelope cr
+        assertEqual
+            "messaging.system"
+            (Just (AttributeValue (TextAttribute "kafka")))
+            (HashMap.lookup "messaging.system" env.attributes)
+    , testCase "attributes carry typed messaging.kafka.destination.partition" $ do
+        let cr = mkRecord (TopicName "orders") (PartitionId 2) (Offset 42) NoTimestamp mempty Nothing Nothing
+            env = consumerRecordToEnvelope cr
+        assertEqual
+            "messaging.kafka.destination.partition"
+            (Just (AttributeValue (IntAttribute 2)))
+            (HashMap.lookup (unkey Sem.messaging_kafka_destination_partition) env.attributes)
+    , testCase "attributes carry typed messaging.kafka.message.offset" $ do
+        let cr = mkRecord (TopicName "orders") (PartitionId 2) (Offset 42) NoTimestamp mempty Nothing Nothing
+            env = consumerRecordToEnvelope cr
+        assertEqual
+            "messaging.kafka.message.offset"
+            (Just (AttributeValue (IntAttribute 42)))
+            (HashMap.lookup (unkey Sem.messaging_kafka_message_offset) env.attributes)
     ]
 
 traceHeaderTests :: [TestTree]
