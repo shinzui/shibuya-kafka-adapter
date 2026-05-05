@@ -123,12 +123,4 @@ in  Schema.Project::{ project =
           ]
         }
       ]
-    , docs =
-      [ Schema.DocRef::{ key = "plans"
-        , kind = Schema.DocKind.Reference
-        , audience = Schema.DocAudience.Internal
-        , description = Some "Execution plans for adapter development"
-        , location = Schema.DocLocation.LocalDir "docs/plans"
-        }
-      ]
     }

@@ -98,6 +98,21 @@ in  Cookbook.CookbookCatalog::{
             "Reusable test pattern: produce-consume roundtrips, offset commit verification, multi-partition, graceful shutdown"
         }
       , Cookbook.CookbookEntry::{
+        , key = "otel-tracing"
+        , title = "OpenTelemetry tracing for consumed Kafka messages"
+        , contentType = ContentType.SampleCode
+        , topics = [ Topic.Observability, Topic.Streaming ]
+        , packages =
+          [ "shibuya-kafka-adapter", "shibuya", "hs-opentelemetry-sdk" ]
+        , language = Schema.Language.Haskell
+        , audience = Schema.DocAudience.User
+        , location =
+            Schema.DocLocation.LocalFile
+              "shibuya-kafka-adapter-jitsurei/app/OtelDemo.hs"
+        , description = Some
+            "Wrap each envelope's AckHandle with Shibuya's traced transformer so handler finalize runs inside a Consumer-kind shibuya.process.message span parented on the carried W3C traceparent"
+        }
+      , Cookbook.CookbookEntry::{
         , key = "redpanda-dev-env"
         , title = "Local Redpanda dev environment with process-compose"
         , contentType = ContentType.Configuration
