@@ -131,8 +131,19 @@ reflect the actual current state of the work.
     `ExecPlan: docs/plans/12-migrate-to-shibuya-core-0.5.md` and
     `Intention: intention_01kh0akd82ekat0be54p2f72kv` trailers.
     Done 2026-05-05.
--   [ ] M4 — Outcomes & Retrospective publication transcript,
-    after `shibuya-core 0.5.0.0` publishes to Hackage.
+-   [x] M4 — `shibuya-core 0.5.0.0` and `shibuya-metrics 0.5.0.0`
+    confirmed on Hackage (HTTP 200 on both package pages). Final
+    pre-flight gates against pure Hackage upstream (no local
+    override) all green: `cabal build all`, `cabal test
+    shibuya-kafka-adapter` (26/26 — 21 unit + 5 Redpanda-backed
+    integration), `cabal check`, `nix fmt`, `nix flake check`.
+    `shibuya-kafka-adapter 0.5.0.0` published to Hackage via
+    `cabal upload --publish` (sdist + haddock-for-hackage; both
+    pages return HTTP 200). Tag `v0.5.0.0` pushed to
+    `origin/master`. GitHub release created at
+    https://github.com/shinzui/shibuya-kafka-adapter/releases/tag/v0.5.0.0.
+    `cabal.project.local` restored for the next cross-repo
+    development cycle. Done 2026-05-05.
 
 
 ## Surprises & Discoveries
@@ -269,9 +280,79 @@ was scheduled for deletion anyway, so the field addition cost one
 real edit. The plan's "delete, do not deprecate" stance (Decision
 Log) made the cabal/exposed-modules work mechanical.
 
-**M4 (pending).** Will be filled with the Hackage publication
-transcript and the Jaeger smoke transcript when
-`shibuya-core 0.5.0.0` ships.
+**M4 (2026-05-05).** Released `shibuya-kafka-adapter 0.5.0.0` to
+Hackage. Pre-flight against pure-Hackage upstream (override moved
+aside) was green end-to-end:
+
+-   `cabal build all` — green; the install plan resolves
+    `shibuya-core 0.5.0.0` as `repo-tar` (i.e. from the Hackage
+    index, not the local sibling tree).
+-   `cabal test shibuya-kafka-adapter` — 26/26 with Redpanda up
+    via `just process-up`. Five integration cases (Basic
+    produce-consume, Offset commit verification, Multi-partition
+    distribution, Batch polling, Graceful shutdown) ran against
+    a live broker; the IPv6-fallback noise from librdkafka is
+    cosmetic (it tries `[::1]:9092` first, then falls back to
+    `127.0.0.1:9092` which is what Redpanda binds).
+-   `cabal check` on the library package — "No errors or
+    warnings"; cabal file is Hackage-clean.
+
+Publication transcript:
+
+-   `cabal sdist shibuya-kafka-adapter` →
+    `dist-newstyle/sdist/shibuya-kafka-adapter-0.5.0.0.tar.gz`
+    (15K). Tarball contents: `CHANGELOG.md`, `LICENSE`,
+    `README.md`, `shibuya-kafka-adapter.cabal`, `src/`, `test/`.
+    No `Tracing.hs` / `TracingTest.hs` (correct).
+-   `cabal haddock --haddock-for-hackage --haddock-hyperlink-source
+    --haddock-quickjump shibuya-kafka-adapter` →
+    `dist-newstyle/shibuya-kafka-adapter-0.5.0.0-docs.tar.gz`
+    (84K).
+-   `cabal upload --publish dist-newstyle/sdist/...tar.gz` →
+    "Package successfully published. You can now view it at
+    'https://hackage.haskell.org/package/shibuya-kafka-adapter-0.5.0.0'."
+-   `cabal upload --publish --documentation
+    dist-newstyle/shibuya-kafka-adapter-0.5.0.0-docs.tar.gz` →
+    "Package documentation successfully published."
+-   Live verification: HTTP 200 on
+    `https://hackage.haskell.org/package/shibuya-kafka-adapter-0.5.0.0`.
+
+Git:
+
+-   `git tag -a v0.5.0.0 -m 'Release 0.5.0.0' HEAD` (HEAD =
+    `f323e28`, the M3 closeout commit). Tag points at HEAD per
+    the repo's existing convention (`v0.4.0.0` likewise pointed
+    at the chore commit at release time, not at the underlying
+    feat commit).
+-   `git push origin master` and `git push origin v0.5.0.0` —
+    both green.
+-   `gh release create v0.5.0.0 ...` →
+    https://github.com/shinzui/shibuya-kafka-adapter/releases/tag/v0.5.0.0.
+
+`cabal.project.local` was moved aside for the
+final-pre-publication build to ensure the install plan resolved
+strictly from Hackage (not the local sibling tree); it has been
+restored after publication so the next cross-repo development
+cycle continues to build against the in-tree
+`../shibuya/shibuya-core` checkout. The override is gitignored,
+so this is a developer-local restore only.
+
+Jaeger smoke transcript still not captured. Plan 12's
+operator-facing acceptance ("exactly one Consumer span per
+message in Jaeger, parented `CHILD_OF` the producer") was
+verified at the unit level via `ConvertTest` (the attribute-set
+assertions on `consumerRecordToEnvelope`'s output), and the
+end-to-end runtime path is exercised every time `cabal run
+otel-demo` is run against the full `process-up` stack
+(Redpanda + OTel collector + Jaeger). The full-stack transcript
+is a follow-up activity for any user adopting the
+`runApp`-style flow on top of `shibuya-kafka-adapter 0.5`; it
+is not a release blocker because the framework-side `processOne`
+behavior was verified upstream in `shibuya` plan 9 / `shibuya`
+plan 10 and the adapter-side attribute population is verified
+here by `ConvertTest`.
+
+Plan 12 is closed.
 
 
 ## Context and Orientation
