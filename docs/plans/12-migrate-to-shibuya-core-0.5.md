@@ -118,13 +118,21 @@ reflect the actual current state of the work.
     module (verified). No refactor needed. Done 2026-05-05.
 -   [x] M2.4 — `CHANGELOG.md` `0.5.0.0` entry recorded. Done
     2026-05-05.
--   [ ] M3.1 — `cabal build all` is green; `cabal test
+-   [x] M3.1 — `nix fmt` (no changes), `nix flake check`
+    (formatting + pre-commit-check both green),
+    `cabal build all` (green), `cabal test
     shibuya-kafka-adapter-test --test-options="--pattern Convert"`
-    is green (19/19). `nix flake check` and `cabal bench` not yet
-    run.
--   [ ] M3.2 — Commit (in progress).
--   [ ] M4 — Outcomes & Retrospective + publication, after
-    `shibuya-core 0.5.0.0` publishes to Hackage.
+    (19/19), and `cabal bench shibuya-kafka-adapter-bench` all
+    green. Bench numbers (572 / 533 ns for
+    `consumerRecordToEnvelope` with / without trace headers) sit
+    within the previous baseline's noise band (575 ± 56 / 529 ± 30
+    ns). Done 2026-05-05.
+-   [x] M3.2 — Commit `0440544` lands the M1+M2 changes with
+    `ExecPlan: docs/plans/12-migrate-to-shibuya-core-0.5.md` and
+    `Intention: intention_01kh0akd82ekat0be54p2f72kv` trailers.
+    Done 2026-05-05.
+-   [ ] M4 — Outcomes & Retrospective publication transcript,
+    after `shibuya-core 0.5.0.0` publishes to Hackage.
 
 
 ## Surprises & Discoveries
@@ -210,7 +218,60 @@ Record every decision made while working on the plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or
 at completion. Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+**M1–M3 (2026-05-05).** The migration landed in a single commit
+(`0440544`), structured exactly along the milestone boundaries the
+plan called out: cabal pin + Convert-side `attributes` population
+(M1), `Shibuya.Adapter.Kafka.Tracing` deletion + `OtelDemo.hs`
+refactor (M2), local gates + commit (M3). The final shape matches
+the Purpose section: `consumerRecordToEnvelope` is the sole producer
+of typed Kafka span attributes (`messaging.system="kafka"`,
+`messaging.kafka.destination.partition` :: `Int64`,
+`messaging.kafka.message.offset` :: `Int64`); the framework's
+`processOne` consumes them onto its single Consumer-kind span; the
+duplicate-span hazard called out in plan 9 / Finding F1 of the
+sibling repo cannot recur because the `traced` wrapper that produced
+the sibling span no longer exists in the source tree.
+
+Net diff per the commit: +207 / −511 lines. The two sources of the
+deletion are `Shibuya.Adapter.Kafka.Tracing` (~140 lines) and its
+test suite (~230 lines, exercising scenarios the framework now owns
+end-to-end). `OtelDemo.hs` shrank by roughly a third (the bespoke
+`Stream.fold` + manual `finalize AckOk` loop collapsed into a
+`runWithMetrics` call with a one-line handler).
+
+Bench numbers held within noise: `consumerRecordToEnvelope` measured
+572 ns (with trace headers) and 533 ns (without) versus a baseline
+of 575 ± 56 and 529 ± 30 ns respectively. Adding the three-element
+`HashMap` did not register as a regression; the Kafka-typed
+`unkey`-derived attribute keys are computed at construction time,
+not on the hot path.
+
+**Gaps carried into M4.** The Jaeger smoke transcript still needs
+to be captured against a live Redpanda + collector + Jaeger stack
+(`just process-up`, `rpk topic produce ... -H 'traceparent=...'`,
+`cabal run otel-demo`, then `curl
+http://127.0.0.1:16686/api/traces/<trace-id>` per the plan's M2
+recipe). The unit-level evidence (`ConvertTest` asserting the
+attribute set) and the cabal/build evidence are sufficient for the
+commit, but the operator-facing acceptance ("exactly one Consumer
+span per message in Jaeger, parented `CHILD_OF` the producer") is a
+runtime check we have not yet run end-to-end. Captured under M4 so
+it is paired with the publication recipe.
+
+**Lessons.** The work split cleanly in two because the
+`Envelope.attributes` field added in `shibuya-core 0.5` is the
+*only* coupling point between the framework span and the adapter's
+typed attribute work — once Convert.hs populated it, the `Tracing`
+module had no remaining job. Auditing for direct `Envelope { ... }`
+construction sites (M1.2) before bumping the `shibuya-core` pin
+turned up exactly two call sites and one of those (`TracingTest`)
+was scheduled for deletion anyway, so the field addition cost one
+real edit. The plan's "delete, do not deprecate" stance (Decision
+Log) made the cabal/exposed-modules work mechanical.
+
+**M4 (pending).** Will be filled with the Hackage publication
+transcript and the Jaeger smoke transcript when
+`shibuya-core 0.5.0.0` ships.
 
 
 ## Context and Orientation
