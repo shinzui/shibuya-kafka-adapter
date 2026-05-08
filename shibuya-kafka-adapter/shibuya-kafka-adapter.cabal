@@ -60,7 +60,7 @@ library
     , hs-opentelemetry-semantic-conventions  ^>=0.1
     , hw-kafka-client                        >=5.3       && <6
     , hw-kafka-streamly                      ^>=0.2
-    , kafka-effectful                        ^>=0.1
+    , kafka-effectful                        ^>=0.2
     , shibuya-core                           ^>=0.5
     , stm                                    ^>=2.5
     , streamly                               ^>=0.11
