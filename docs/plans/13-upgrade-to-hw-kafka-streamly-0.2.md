@@ -56,8 +56,9 @@ no compilation errors referencing `Kafka.Streamly.Source`, demonstrates the upgr
   numbers track the plan-3 baseline. (2026-05-08)
 - [x] Add a CHANGELOG entry to
   `shibuya-kafka-adapter/CHANGELOG.md` describing the dependency upgrade. (2026-05-08)
-- [ ] Commit with a Conventional Commits message and the
-  `ExecPlan: docs/plans/13-upgrade-to-hw-kafka-streamly-0.2.md` git trailer.
+- [x] Commit with a Conventional Commits message and the
+  `ExecPlan: docs/plans/13-upgrade-to-hw-kafka-streamly-0.2.md` git trailer
+  (commit `5f3e92c`). (2026-05-08)
 
 
 ## Surprises & Discoveries
