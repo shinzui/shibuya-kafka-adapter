@@ -1,8 +1,15 @@
+---
+id: 6
+slug: api-surface-polish
+title: "Refine the Shibuya.Adapter.Kafka public surface"
+kind: exec-plan
+created_at: 2026-04-18T14:48:21Z
+intention: "intention_01kpgf1jjwep58kvk47aasf2ek"
+master_plan: "docs/masterplans/1-0.1.0.0-release-prep.md"
+---
+
+
 # Refine the Shibuya.Adapter.Kafka public surface
-
-Intention: intention_01kpgf1jjwep58kvk47aasf2ek
-
-MasterPlan: docs/masterplans/1-0.1.0.0-release-prep.md
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

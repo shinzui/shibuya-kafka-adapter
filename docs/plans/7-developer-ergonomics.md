@@ -1,8 +1,15 @@
+---
+id: 7
+slug: developer-ergonomics
+title: "Add a Justfile, stricter warnings, and README polish"
+kind: exec-plan
+created_at: 2026-04-18T15:01:16Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+master_plan: "docs/masterplans/1-0.1.0.0-release-prep.md"
+---
+
+
 # Add a Justfile, stricter warnings, and README polish
-
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
-
-MasterPlan: docs/masterplans/1-0.1.0.0-release-prep.md
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

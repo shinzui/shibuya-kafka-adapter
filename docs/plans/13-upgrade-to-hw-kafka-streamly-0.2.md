@@ -1,6 +1,14 @@
-# Upgrade to hw-kafka-streamly 0.2.0.0
+---
+id: 13
+slug: upgrade-to-hw-kafka-streamly-0.2
+title: "Upgrade to hw-kafka-streamly 0.2.0.0"
+kind: exec-plan
+created_at: 2026-05-08T11:28:11Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+---
 
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
+
+# Upgrade to hw-kafka-streamly 0.2.0.0
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

@@ -1,6 +1,14 @@
-# Add benchmark package with tasty-bench
+---
+id: 2
+slug: add-benchmark-package
+title: "Add benchmark package with tasty-bench"
+kind: exec-plan
+created_at: 2026-04-03T14:32:47Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+---
 
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
+
+# Add benchmark package with tasty-bench
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

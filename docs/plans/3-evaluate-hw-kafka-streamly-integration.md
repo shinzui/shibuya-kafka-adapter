@@ -1,3 +1,12 @@
+---
+id: 3
+slug: evaluate-hw-kafka-streamly-integration
+title: "Evaluate whether hw-kafka-streamly improves the adapter"
+kind: exec-plan
+created_at: 2026-04-17T23:18:49Z
+---
+
+
 # Evaluate whether hw-kafka-streamly improves the adapter
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,

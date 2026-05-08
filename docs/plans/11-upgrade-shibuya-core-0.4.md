@@ -1,6 +1,14 @@
-# Upgrade to shibuya-core 0.4.0.0 and re-release as 0.4.0.0
+---
+id: 11
+slug: upgrade-shibuya-core-0.4
+title: "Upgrade to shibuya-core 0.4.0.0 and re-release as 0.4.0.0"
+kind: exec-plan
+created_at: 2026-04-29T22:57:13Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+---
 
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
+
+# Upgrade to shibuya-core 0.4.0.0 and re-release as 0.4.0.0
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

@@ -1,6 +1,14 @@
-# Add `Shibuya.Adapter.Kafka.Tracing` for in-repo span instrumentation
+---
+id: 9
+slug: add-shibuya-kafka-tracing-module
+title: "Add Shibuya.Adapter.Kafka.Tracing for in-repo span instrumentation"
+kind: exec-plan
+created_at: 2026-04-18T18:37:58Z
+intention: "intention_01kpgjfhrfe499b5vtpa043pyx"
+---
 
-Intention: intention_01kpgjfhrfe499b5vtpa043pyx
+
+# Add `Shibuya.Adapter.Kafka.Tracing` for in-repo span instrumentation
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

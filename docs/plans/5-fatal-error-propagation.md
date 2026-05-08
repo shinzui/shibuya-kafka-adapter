@@ -1,8 +1,15 @@
+---
+id: 5
+slug: fatal-error-propagation
+title: "Propagate fatal Kafka errors through the adapter"
+kind: exec-plan
+created_at: 2026-04-18T14:33:36Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+master_plan: "docs/masterplans/1-0.1.0.0-release-prep.md"
+---
+
+
 # Propagate fatal Kafka errors through the adapter
-
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
-
-MasterPlan: docs/masterplans/1-0.1.0.0-release-prep.md
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.

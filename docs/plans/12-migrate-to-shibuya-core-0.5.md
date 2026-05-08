@@ -1,6 +1,14 @@
-# Migrate to shibuya-core 0.5.0.0 and remove `Shibuya.Adapter.Kafka.Tracing`
+---
+id: 12
+slug: migrate-to-shibuya-core-0.5
+title: "Migrate to shibuya-core 0.5.0.0 and remove Shibuya.Adapter.Kafka.Tracing"
+kind: exec-plan
+created_at: 2026-05-05T23:34:04Z
+intention: "intention_01kh0akd82ekat0be54p2f72kv"
+---
 
-Intention: intention_01kh0akd82ekat0be54p2f72kv
+
+# Migrate to shibuya-core 0.5.0.0 and remove `Shibuya.Adapter.Kafka.Tracing`
 
 This ExecPlan is a living document. The sections Progress, Surprises &
 Discoveries, Decision Log, and Outcomes & Retrospective must be kept up

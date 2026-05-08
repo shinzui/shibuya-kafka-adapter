@@ -1,6 +1,14 @@
-# Align `Shibuya.Adapter.Kafka.Tracing` with OTel messaging semantic conventions
+---
+id: 10
+slug: align-kafka-adapter-otel-semantic-conventions
+title: "Align Shibuya.Adapter.Kafka.Tracing with OTel messaging semantic conventions"
+kind: exec-plan
+created_at: 2026-04-22T14:57:43Z
+intention: "intention_01khv57nhzesc9hx46f9bz0vbq"
+---
 
-Intention: intention_01khv57nhzesc9hx46f9bz0vbq
+
+# Align `Shibuya.Adapter.Kafka.Tracing` with OTel messaging semantic conventions
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
