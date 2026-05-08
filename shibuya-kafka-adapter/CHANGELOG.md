@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0.1 — 2026-05-08
+
+### Changed
+
+- Upgraded `hw-kafka-streamly` dependency from `^>=0.1` to `^>=0.2`. The
+  upstream 0.2.0.0 release renames `Kafka.Streamly.Source` to
+  `Kafka.Streamly.Stream` and `Kafka.Streamly.Sink` to `Kafka.Streamly.Fold`
+  to match Streamly's native vocabulary. The adapter only used `skipNonFatal`
+  and `isFatal` from the renamed module, both of which keep identical
+  signatures; this is a mechanical import rename with no API-shape change.
+  Haddock cross-references in `Shibuya.Adapter.Kafka` and
+  `Shibuya.Adapter.Kafka.Internal` are updated accordingly.
+
 ## 0.5.0.0 — 2026-05-05
 
 ### Breaking Changes

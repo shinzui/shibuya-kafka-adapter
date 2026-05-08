@@ -36,7 +36,7 @@ main = runEff
 == Fatal Error Propagation
 
 Non-fatal Kafka errors (poll timeouts, partition EOFs, and the rest of the
-non-fatal set defined by @hw-kafka-streamly@'s 'Kafka.Streamly.Source.isFatal')
+non-fatal set defined by @hw-kafka-streamly@'s 'Kafka.Streamly.Stream.isFatal')
 are filtered out of the poll stream. Any error that survives that filter is
 fatal by construction (for example, an SSL handshake failure, an authentication
 failure, or an invalid broker configuration) and terminates the stream by

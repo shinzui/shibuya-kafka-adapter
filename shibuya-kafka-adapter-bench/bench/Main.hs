@@ -6,7 +6,7 @@ import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
 import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (..))
-import Kafka.Streamly.Source (isFatal, skipNonFatal)
+import Kafka.Streamly.Stream (isFatal, skipNonFatal)
 import Kafka.Types (Headers, KafkaError (..), Millis (..), PartitionId (..), TopicName (..), headersFromList)
 import Shibuya.Adapter.Kafka.Convert (
     consumerRecordToEnvelope,

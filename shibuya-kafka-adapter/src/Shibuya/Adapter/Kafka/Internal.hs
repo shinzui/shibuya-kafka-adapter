@@ -25,7 +25,7 @@ import Kafka.Effectful.Consumer.Effect (
     pollMessageBatch,
     storeOffsetMessage,
  )
-import Kafka.Streamly.Source (skipNonFatal)
+import Kafka.Streamly.Stream (skipNonFatal)
 import Kafka.Types (KafkaError)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
@@ -97,7 +97,7 @@ stream of 'Ingested'.
 
 A @Right cr@ is wrapped via the supplied builder (in production,
 'mkIngested'). A @Left err@ that reaches this stage is fatal by construction
-— 'Kafka.Streamly.Source.skipNonFatal' has already dropped non-fatal errors
+— 'Kafka.Streamly.Stream.skipNonFatal' has already dropped non-fatal errors
 — and is thrown via the 'Error' @KafkaError@ effect, terminating the stream.
 
 Parameterizing over the builder function keeps this helper free of the
