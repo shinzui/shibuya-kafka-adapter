@@ -5,7 +5,7 @@ opens the per-message Consumer span. The Kafka adapter's
 'Envelope.attributes' with @messaging.system=kafka@ plus the typed
 @messaging.kafka.destination.partition@ and
 @messaging.kafka.message.offset@; the framework merges those onto
-its single per-message span.
+its single per-message span alongside @messaging.operation.type=process@.
 
 This replaces the previous use of the @Shibuya.Adapter.Kafka.Tracing.traced@
 stream transformer, which has been deleted (see plan 12 for the
@@ -88,7 +88,7 @@ main = do
             <> " message(s); group="
             <> cgId
             <> ")..."
-    bracket initializeGlobalTracerProvider shutdownTracerProvider $ \provider -> do
+    bracket initializeGlobalTracerProvider (`shutdownTracerProvider` Just 5_000_000) $ \provider -> do
         let tracer = makeTracer provider "shibuya-kafka-adapter-jitsurei" tracerOptions
         result <- runEff . runError @KafkaError . runTracing tracer $ do
             let props =

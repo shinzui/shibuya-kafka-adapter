@@ -6,27 +6,15 @@ Integrates with Apache Kafka via [`kafka-effectful`](https://github.com/shinzui/
 
 ## Packages
 
-- `shibuya-kafka-adapter` — the adapter library (`Shibuya.Adapter.Kafka`, `.Config`, `.Convert`, `.Tracing`).
+- `shibuya-kafka-adapter` — the adapter library (`Shibuya.Adapter.Kafka`, `.Config`, `.Convert`).
 - `shibuya-kafka-adapter-bench` — micro-benchmarks for the conversion hot path (`ConsumerRecord` → `Envelope`, W3C header extraction, timestamps).
 - `shibuya-kafka-adapter-jitsurei` — runnable examples: `BasicConsumer`, `MultiTopic`, `MultiPartition`, `OffsetManagement`.
 
-## Tracing (opt-in)
+## Tracing
 
-`Shibuya.Adapter.Kafka.Tracing.traced` is an opt-in stream transformer that wraps each emitted `Ingested` so that the downstream handler's eventual `finalize` call runs inside a Consumer-kind OpenTelemetry span named following the messaging convention `"<destination> <operation>"` — e.g. `"orders process"` for a topic named `orders`. The span inherits the envelope's W3C `traceparent` as parent (from `Envelope.traceContext`) or opens a fresh root span when no parent is present, and is populated with the spec-aligned messaging attributes (`messaging.system=kafka`, `messaging.destination.name`, `messaging.operation=process`, `messaging.message.id`) and the Kafka-specific typed attributes `messaging.kafka.destination.partition` (Int64) and `messaging.kafka.message.offset` (Int64) when available. A caller that does not import this module pays nothing — no spans are opened and the adapter's public surface is unchanged.
+Tracing is handled by `shibuya-core`'s supervised runner. `Shibuya.Adapter.Kafka.Convert.consumerRecordToEnvelope` populates `Envelope.attributes` with `messaging.system=kafka` and the Kafka-specific typed attributes `messaging.kafka.destination.partition` (Int64) and `messaging.kafka.message.offset` (Int64). The framework merges those onto its single Consumer-kind per-message span alongside `messaging.destination.name`, `messaging.operation.type=process`, and `messaging.message.id`.
 
-Typical wiring:
-
-```haskell
-import Shibuya.Adapter.Kafka (kafkaAdapter, defaultConfig)
-import Shibuya.Adapter.Kafka.Tracing (traced)
-import Shibuya.Telemetry.Effect (runTracing)
-
-runTracing tracer $ do
-  Adapter{source} <- kafkaAdapter (defaultConfig [TopicName "orders"])
-  Stream.fold Fold.drain
-    $ Stream.mapM userHandler
-    $ traced (TopicName "orders") source
-```
+The old opt-in `Shibuya.Adapter.Kafka.Tracing` module was removed in `0.5.0.0`; callers should run the Kafka adapter through Shibuya's normal `runApp` or `runWithMetrics` path instead of wrapping the stream.
 
 ## Building
 

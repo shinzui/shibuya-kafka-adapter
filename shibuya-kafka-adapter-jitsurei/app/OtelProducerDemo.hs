@@ -75,7 +75,7 @@ producerSpanArgs = defaultSpanArguments{kind = Producer}
 main :: IO ()
 main = do
     TIO.putStrLn "[otel-producer-demo] Starting..."
-    bracket initializeGlobalTracerProvider shutdownTracerProvider $ \provider -> do
+    bracket initializeGlobalTracerProvider (`shutdownTracerProvider` Just 5_000_000) $ \provider -> do
         bracket (newProducer producerProps) closeIfRight $ \case
             Left err ->
                 putStrLn $ "[otel-producer-demo] Failed to create producer: " <> show err

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0.0 — 2026-05-31
+
+### Breaking Changes
+
+- Tracks the `shibuya-core 0.6.0.0` release and the `hs-opentelemetry`
+  1.0 package set. The framework's per-message OpenTelemetry span now
+  emits `messaging.operation.type="process"` instead of the deprecated
+  `messaging.operation="process"` key. Dashboards, alerts, and trace
+  queries filtering on the old key must be updated.
+- Bumps the `kafka-effectful` dependency to `^>=0.3.0.0`, the first
+  release with native `hs-opentelemetry` 1.0 support.
+
+### Other Changes
+
+- Bumps direct OpenTelemetry dependencies to
+  `hs-opentelemetry-api ^>=1.0` and
+  `hs-opentelemetry-semantic-conventions ^>=1.40`.
+- Bumps example-only OpenTelemetry dependencies to the 1.0 package set:
+  `hs-opentelemetry-sdk`, `hs-opentelemetry-exporter-otlp`, and
+  `hs-opentelemetry-instrumentation-hw-kafka-client`.
+- Updates the OpenTelemetry examples for the 1.0
+  `shutdownTracerProvider` API, which now takes an optional timeout.
+
 ## 0.5.0.1 — 2026-05-08
 
 ### Changed

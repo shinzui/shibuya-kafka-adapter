@@ -61,7 +61,7 @@ iterations = 10
 main :: IO ()
 main = do
     TIO.putStrLn "[otel-upstream-probe] Starting (10 poll iterations)..."
-    bracket initializeGlobalTracerProvider shutdownTracerProvider $ \_ -> do
+    bracket initializeGlobalTracerProvider (`shutdownTracerProvider` Just 5_000_000) $ \_ -> do
         let cp = consumerProps "otel-upstream-probe"
         result <- bracket (newConsumer cp consumerSub) closeIt $ \case
             Left err -> do
