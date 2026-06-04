@@ -1,71 +1,39 @@
 {
   description = "Shibuya adapter for kafka";
 
-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  inputs.treefmt-nix.url = "github:numtide/treefmt-nix";
-  inputs.pre-commit-hooks.url = "github:cachix/git-hooks.nix";
+  inputs = {
+    # The shared base flake. Provides the GHC 9.12.4 / cabal / HLS toolchain via
+    # `mkDevShell`, and the single pinned nixpkgs the whole fleet follows.
+    haskell-nix-dev.url = "github:shinzui/haskell-nix-dev";
+    nixpkgs.follows = "haskell-nix-dev/nixpkgs";
 
-  outputs = { self, nixpkgs, flake-utils, treefmt-nix, pre-commit-hooks }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs { inherit system; };
-        ghcVersion = "ghc912";
-        haskellPackages = pkgs.haskell.packages."${ghcVersion}";
-        treefmtEval = treefmt-nix.lib.evalModule pkgs ./treefmt.nix;
-        formatter = treefmtEval.config.build.wrapper;
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
-        # Feature flags
-        withProcessCompose = true;
-        withPostgresql = false;
-      in
-      {
-        formatter = formatter;
+    treefmt-nix.follows = "haskell-nix-dev/treefmt-nix";
 
-        checks = {
-          formatting = treefmtEval.config.build.check self;
-          pre-commit-check = pre-commit-hooks.lib.${system}.run {
-            src = ./.;
-            hooks = {
-              treefmt.package = formatter;
-              treefmt.enable = true;
-            };
-          };
-        };
+    pre-commit-hooks.url = "github:cachix/git-hooks.nix";
+    pre-commit-hooks.inputs.nixpkgs.follows = "nixpkgs";
+  };
 
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [
-            pkgs.zlib
-            pkgs.rdkafka
-            pkgs.just
-            pkgs.cabal-install
-            pkgs.pkg-config
-            (haskellPackages.ghcWithPackages (ps: [
-              ps.haskell-language-server
-            ]))
-          ]
-          ++ pkgs.lib.optional withProcessCompose pkgs.process-compose
-          ++ pkgs.lib.optional withPostgresql pkgs.postgresql;
+  nixConfig = {
+    extra-substituters = [ ];
+    extra-trusted-public-keys = [ ];
+  };
 
-          shellHook = ''
-            ${self.checks.${system}.pre-commit-check.shellHook}
-            export LANG=en_US.UTF-8
-          ''
-          + pkgs.lib.optionalString withPostgresql ''
-            export PGHOST="$PWD/db"
-            export PGDATA="$PGHOST/db"
-            export PGLOG=$PGHOST/postgres.log
-            export PGDATABASE=shibuya-kafka-adapter
-            export PG_CONNECTION_STRING=postgresql://$(jq -rn --arg x $PGHOST '$x|@uri')/$PGDATABASE
+  # Thin flake-parts shell. The dev toolchain comes from the haskell-nix-dev base
+  # flake (GHC 9.12.4 / cabal / HLS via mkDevShell); project wiring lives in the
+  # imported ./nix modules.
+  outputs = inputs@{ flake-parts, nixpkgs, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = nixpkgs.lib.systems.flakeExposed;
 
-            mkdir -p $PGHOST
-            mkdir -p .dev
-
-            if [ ! -d $PGDATA ]; then
-              initdb --auth=trust --no-locale --encoding=UTF8
-            fi
-          '';
-        };
-      }
-    );
+      imports =
+        [
+          ./nix/haskell.nix
+          ./nix/treefmt.nix
+          ./nix/pre-commit.nix
+        ]
+        ++ nixpkgs.lib.optional (builtins.pathExists ./flake.module.nix) ./flake.module.nix;
+    };
 }
