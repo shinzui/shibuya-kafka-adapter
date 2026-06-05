@@ -40,6 +40,10 @@ Field mapping:
 * @partition@: @Just (show partitionId)@
 * @enqueuedAt@: converted from Kafka timestamp if available
 * @traceContext@: extracted from @traceparent@/@tracestate@ headers
+* @headers@: every Kafka header verbatim (ordered, duplicates
+  preserved) via @headersToList@; @Just []@ when the record carried
+  no headers. The W3C trace headers appear here in addition to their
+  parsed form in @traceContext@.
 * @attempt@: 'Nothing' (Kafka does not expose a redelivery counter)
 * @attributes@: kafka-typed OTel attributes (system, partition,
   offset). The framework's @processOne@ adds these to its
@@ -60,6 +64,7 @@ consumerRecordToEnvelope cr =
         , partition = Just (Text.pack (show (unPartitionId cr.crPartition)))
         , enqueuedAt = timestampToUTCTime cr.crTimestamp
         , traceContext = extractTraceHeaders cr.crHeaders
+        , headers = Just (headersToList cr.crHeaders)
         , attempt = Nothing
         , attributes = kafkaSpanAttributes cr.crPartition cr.crOffset
         , payload = cr.crValue

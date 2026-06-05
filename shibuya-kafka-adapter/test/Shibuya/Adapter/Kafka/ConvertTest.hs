@@ -87,6 +87,15 @@ envelopeTests =
             cr = mkRecord (TopicName "t") (PartitionId 0) (Offset 0) NoTimestamp hdrs Nothing Nothing
             env = consumerRecordToEnvelope cr
         assertEqual "traceContext" (Just [("traceparent", "00-abc-def-01")]) env.traceContext
+    , testCase "headers surfaced verbatim (order and duplicates preserved)" $ do
+        let raw = [("schema-id", "42"), ("x-tag", "a"), ("x-tag", "b")]
+            cr = mkRecord (TopicName "t") (PartitionId 0) (Offset 0) NoTimestamp (headersFromList raw) Nothing Nothing
+            env = consumerRecordToEnvelope cr
+        assertEqual "headers" (Just raw) env.headers
+    , testCase "empty headers surface as Just []" $ do
+        let cr = mkRecord (TopicName "t") (PartitionId 0) (Offset 0) NoTimestamp mempty Nothing Nothing
+            env = consumerRecordToEnvelope cr
+        assertEqual "headers" (Just []) env.headers
     , testCase "attributes carry messaging.system=kafka" $ do
         let cr = mkRecord (TopicName "orders") (PartitionId 2) (Offset 42) NoTimestamp mempty Nothing Nothing
             env = consumerRecordToEnvelope cr

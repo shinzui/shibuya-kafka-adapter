@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0.0 — 2026-06-05
+
+### Changed
+
+- Require `shibuya-core ^>=0.7.0.0`. `Envelope` now carries a
+  `headers :: Maybe Headers` field; `consumerRecordToEnvelope` populates it
+  with every Kafka header verbatim (ordered, duplicates preserved) via
+  `headersToList`. A record with no headers yields `Just []`. The parsed W3C
+  trace headers continue to appear in `traceContext` and now also appear
+  verbatim in `headers`.
+
 ## 0.6.0.0 — 2026-05-31
 
 ### Breaking Changes
