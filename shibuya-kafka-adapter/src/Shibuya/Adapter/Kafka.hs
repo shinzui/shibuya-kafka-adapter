@@ -76,7 +76,7 @@ module Shibuya.Adapter.Kafka (
 )
 where
 
-import Control.Concurrent.STM (atomically, newTVarIO, writeTVar)
+import Control.Concurrent.STM (atomically, writeTVar)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Text qualified as Text
@@ -88,7 +88,7 @@ import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets)
 import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
-import Shibuya.Adapter.Kafka.Internal (ingestedStream, kafkaSource, mkIngested)
+import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, mkIngested, newKafkaAdapterState)
 
 {- | Create a Kafka adapter with the given configuration.
 
@@ -111,14 +111,17 @@ kafkaAdapter ::
     KafkaAdapterConfig ->
     Eff es (Adapter es (Maybe ByteString))
 kafkaAdapter config = do
-    shutdownVar <- liftIO $ newTVarIO False
-    let messageSource = ingestedStream mkIngested (kafkaSource shutdownVar config)
+    state <- liftIO newKafkaAdapterState
+    let messageSource =
+            ingestedStream (mkIngested state config) $
+                dropStaleRecords state $
+                    kafkaSource state config
     pure
         Adapter
             { adapterName = "kafka:" <> Text.intercalate "," (map unTopicName config.topics)
             , source = messageSource
             , shutdown = do
-                liftIO $ atomically $ writeTVar shutdownVar True
+                liftIO $ atomically $ writeTVar state.shutdownVar True
                 commitAllOffsets OffsetCommit
                     `catchError` \_ err -> case err of
                         KafkaResponseError RdKafkaRespErrNoOffset -> pure ()
