@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Shibuya.Adapter.Kafka.AckHandleTest qualified as AckHandleTest
 import Shibuya.Adapter.Kafka.AdapterTest qualified as AdapterTest
 import Shibuya.Adapter.Kafka.ConvertTest qualified as ConvertTest
 import Shibuya.Adapter.Kafka.IntegrationTest qualified as IntegrationTest
@@ -10,7 +11,8 @@ main =
     defaultMain $
         testGroup
             "shibuya-kafka-adapter"
-            [ AdapterTest.tests
+            [ AckHandleTest.tests
+            , AdapterTest.tests
             , ConvertTest.tests
             , IntegrationTest.tests
             ]

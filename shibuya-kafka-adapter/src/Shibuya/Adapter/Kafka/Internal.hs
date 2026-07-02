@@ -29,7 +29,7 @@ import Data.Map.Strict qualified as Map
 import Data.Time.Clock (NominalDiffTime)
 import Effectful (Eff, IOE, (:>))
 import Effectful qualified
-import Effectful.Error.Static (Error, throwError)
+import Effectful.Error.Static (Error, catchError, throwError)
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), PartitionOffset (..), TopicPartition (..))
 import Kafka.Effectful.Consumer.Effect (
     KafkaConsumer,
@@ -38,7 +38,7 @@ import Kafka.Effectful.Consumer.Effect (
     seekPartitions,
     storeOffsetMessage,
  )
-import Kafka.Streamly.Stream (skipNonFatal)
+import Kafka.Streamly.Stream (isFatal, skipNonFatal)
 import Kafka.Types (KafkaError, PartitionId, TopicName)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
@@ -72,7 +72,7 @@ Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
 upstream handling.
 -}
 kafkaSource ::
-    (KafkaConsumer :> es, IOE :> es) =>
+    (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
     KafkaAdapterState ->
     KafkaAdapterConfig ->
     Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
@@ -82,6 +82,10 @@ kafkaSource state config =
             & Stream.concatMap Stream.fromList
   where
     step () = do
+        mbFatal <- Effectful.liftIO $ readIORef state.fatalError
+        case mbFatal of
+            Just err -> throwError err
+            Nothing -> pure ()
         isShutdown <- Effectful.liftIO $ readTVarIO state.shutdownVar
         if isShutdown
             then pure Nothing
@@ -113,31 +117,56 @@ Maps 'AckDecision' to Kafka operations:
 * 'AckHalt' -> 'pausePartitions' (do NOT store offset; message will be re-consumed)
 -}
 mkAckHandle ::
-    (KafkaConsumer :> es, IOE :> es) =>
+    (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
     KafkaAdapterState ->
     KafkaAdapterConfig ->
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
     AckHandle es
 mkAckHandle state config cr = AckHandle $ \case
     AckOk ->
-        storeGuarded state cr
+        ackAttempt state (storeGuarded state cr)
     AckRetry (RetryDelay delay) -> do
         Effectful.liftIO $ delayRetry delay
         Effectful.liftIO $
             atomicModifyIORef' state.seekBarrier $ \barriers ->
                 (Map.insert (partitionKey cr) cr.crOffset barriers, ())
-        seekPartitions
-            [ TopicPartition
-                { tpTopicName = cr.crTopic
-                , tpPartition = cr.crPartition
-                , tpOffset = PartitionOffset (unOffset cr.crOffset)
-                }
-            ]
-            config.pollTimeout
+        ackAttempt state $
+            seekPartitions
+                [ TopicPartition
+                    { tpTopicName = cr.crTopic
+                    , tpPartition = cr.crPartition
+                    , tpOffset = PartitionOffset (unOffset cr.crOffset)
+                    }
+                ]
+                config.pollTimeout
     AckDeadLetter _ ->
-        storeGuarded state cr
+        ackAttempt state (storeGuarded state cr)
     AckHalt _ ->
-        pausePartitions [(cr.crTopic, cr.crPartition)]
+        ackAttempt state (pausePartitions [(cr.crTopic, cr.crPartition)])
+
+ackAttempt ::
+    (Error KafkaError :> es, IOE :> es) =>
+    KafkaAdapterState ->
+    Eff es () ->
+    Eff es ()
+ackAttempt state action = go (1 :: Int)
+  where
+    maxAttempts = 3
+    retryDelayMicros = 50000
+
+    go attempt =
+        action `catchError` \_ err ->
+            if isFatal err || attempt >= maxAttempts
+                then Effectful.liftIO $ recordFatalError state err
+                else do
+                    Effectful.liftIO $ threadDelay retryDelayMicros
+                    go (attempt + 1)
+
+recordFatalError :: KafkaAdapterState -> KafkaError -> IO ()
+recordFatalError state err =
+    atomicModifyIORef' state.fatalError $ \case
+        Just existing -> (Just existing, ())
+        Nothing -> (Just err, ())
 
 storeGuarded ::
     (KafkaConsumer :> es, IOE :> es) =>
@@ -168,7 +197,7 @@ delayRetry delay
 Lease is always 'Nothing' for Kafka (no visibility timeout mechanism).
 -}
 mkIngested ::
-    (KafkaConsumer :> es, IOE :> es) =>
+    (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
     KafkaAdapterState ->
     KafkaAdapterConfig ->
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
