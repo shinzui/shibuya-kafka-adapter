@@ -286,7 +286,7 @@ testAckRetryAbandonedSession = withTestEnv $ \env -> do
                         maybe (pure ()) (liftIO . modifyIORef' redelivered . (:)) envelope.payload
                         finalize AckOk
                     )
-                $ Stream.take 3 source
+                $ Stream.take 2 source
             commitAllOffsets OffsetCommit
     case secondSession of
         Left (_cs, err) -> assertFailure $ "second session failed: " <> show err

@@ -76,7 +76,7 @@ withTestEnv f = do
     prefix <- randomPrefix
     let env =
             TestEnv
-                { testBroker = BrokerAddress "localhost:9092"
+                { testBroker = BrokerAddress "127.0.0.1:9092"
                 , testTopic = TopicName (Text.pack (prefix <> "-topic"))
                 , testGroupId = ConsumerGroupId (Text.pack (prefix <> "-group"))
                 , testPrefix = prefix
