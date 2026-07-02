@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.8.0.0 — 2026-07-02
+
+### Breaking Changes
+
+- Require `shibuya-core ^>=0.8.0.0`.
+- Remove the dead `KafkaAdapterConfig.offsetReset` field. Offset reset policy
+  belongs to the `Subscription` passed to `runKafkaConsumer`; `topics` remains
+  adapter metadata and is checked against the live subscription with a stderr
+  warning on mismatch.
+
+### Changed
+
+- `AckRetry` now seeks the partition back to the failed message instead of
+  storing the offset, preserving at-least-once redelivery.
+- Handler-exception retries from core no longer allow later buffered messages
+  to commit past the failed offset.
+- Ack-path Kafka errors are classified inside `finalize`; transient failures
+  are retried briefly, and persistent failures terminate the source stream as
+  adapter errors instead of handler errors.
+- `AckHalt` pause failures no longer cancel the halt decision.
+- Idle shutdown exits promptly and ignores Kafka's no-offset response when
+  there is nothing to commit.
+- `AckDeadLetter` still stores the offset, but now emits a prominent stderr
+  warning because this adapter does not include a DLQ producer.
+- Add `kafkaAdapterWith`, `newKafkaAdapterState`, and
+  `kafkaRebalanceHandler` for callers that want rebalance logging and eager
+  cleanup of retry barriers for revoked partitions.
+- Document the Serial-only processing contract, the dead-letter limitation,
+  Kafka's lack of delivery-attempt counts, halt/eviction behavior, and shutdown
+  ordering.
+- Compute Kafka headers once in `consumerRecordToEnvelope` and expose
+  `extractTraceHeadersFromList` for callers that already have a materialized
+  header list.
+
 ## 0.7.0.0 — 2026-06-05
 
 ### Changed

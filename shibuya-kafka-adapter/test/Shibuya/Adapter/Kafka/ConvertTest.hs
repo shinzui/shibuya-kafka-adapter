@@ -16,6 +16,7 @@ import OpenTelemetry.SemanticConventions qualified as Sem
 import Shibuya.Adapter.Kafka.Convert (
     consumerRecordToEnvelope,
     extractTraceHeaders,
+    extractTraceHeadersFromList,
     timestampToUTCTime,
  )
 import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..))
@@ -135,6 +136,12 @@ traceHeaderTests =
         assertEqual "trace" Nothing (extractTraceHeaders hdrs)
     , testCase "returns Nothing for empty headers" $ do
         assertEqual "trace" Nothing (extractTraceHeaders mempty)
+    , testCase "extracts from materialized header list" $ do
+        let raw = [("traceparent", "00-list-parent-01"), ("tracestate", "vendor=list")]
+        assertEqual
+            "trace"
+            (Just [("traceparent", "00-list-parent-01"), ("tracestate", "vendor=list")])
+            (extractTraceHeadersFromList raw)
     ]
 
 timestampTests :: [TestTree]

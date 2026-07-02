@@ -9,7 +9,6 @@ module Shibuya.Adapter.Kafka.Config (
 where
 
 import GHC.Generics (Generic)
-import Kafka.Consumer.Types (OffsetReset (..))
 import Kafka.Types (BatchSize (..), Timeout (..), TopicName)
 
 {- | Configuration for the Kafka adapter.
@@ -20,13 +19,15 @@ effect scope, not outside it.
 -}
 data KafkaAdapterConfig = KafkaAdapterConfig
     { topics :: ![TopicName]
-    -- ^ Topics to consume from
+    {- ^ Topics expected by the adapter, used for observability metadata and
+    checked against the live consumer subscription at construction. The
+    actual subscription, including offset-reset policy, is supplied to
+    @runKafkaConsumer@ by the caller.
+    -}
     , pollTimeout :: !Timeout
     -- ^ Timeout for each poll call (default: 1000ms)
     , batchSize :: !BatchSize
     -- ^ Maximum messages per poll batch (default: 100)
-    , offsetReset :: !OffsetReset
-    -- ^ Where to start when no committed offset exists (default: Earliest)
     }
     deriving stock (Show, Eq, Generic)
 
@@ -36,7 +37,6 @@ Defaults:
 
 * @pollTimeout@: 1000ms
 * @batchSize@: 100
-* @offsetReset@: Earliest
 -}
 defaultConfig :: [TopicName] -> KafkaAdapterConfig
 defaultConfig ts =
@@ -44,5 +44,4 @@ defaultConfig ts =
         { topics = ts
         , pollTimeout = Timeout 1000
         , batchSize = BatchSize 100
-        , offsetReset = Earliest
         }

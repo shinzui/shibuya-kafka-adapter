@@ -167,7 +167,6 @@ testGracefulShutdown = withTestEnv $ \env -> do
                         { topics = [env.testTopic]
                         , pollTimeout = Timeout 5000
                         , batchSize = BatchSize 100
-                        , offsetReset = Earliest
                         }
             Adapter{source, shutdown} <- kafkaAdapter config
             Stream.fold Fold.drain
@@ -197,7 +196,6 @@ testIdleGracefulShutdown = withTestEnv $ \env -> do
                         { topics = [env.testTopic]
                         , pollTimeout = Timeout 250
                         , batchSize = BatchSize 100
-                        , offsetReset = Earliest
                         }
             Adapter{source, shutdown} <- kafkaAdapter config
             shutdown
@@ -339,7 +337,6 @@ testConfig env =
         { topics = [env.testTopic]
         , pollTimeout = Timeout 500
         , batchSize = BatchSize 100
-        , offsetReset = Earliest
         }
 
 countPayload :: ByteString -> [ByteString] -> Int

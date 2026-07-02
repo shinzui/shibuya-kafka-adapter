@@ -174,7 +174,6 @@ consumeN env n ackDecision = do
                         { topics = [env.testTopic]
                         , pollTimeout = Timeout 5000
                         , batchSize = BatchSize 100
-                        , offsetReset = Earliest
                         }
             Adapter{source} <- kafkaAdapter config
             Stream.fold Fold.drain

@@ -47,6 +47,7 @@ import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
 import Streamly.Data.Stream (Stream)
 import Streamly.Data.Stream qualified as Stream
+import System.IO (hPutStrLn, stderr)
 
 type PartitionKey = (TopicName, PartitionId)
 
@@ -57,6 +58,9 @@ data KafkaAdapterState = KafkaAdapterState
     , fatalError :: !(IORef (Maybe KafkaError))
     }
 
+{- | Allocate mutable state shared by the Kafka source, ack handles, and
+optional rebalance callback.
+-}
 newKafkaAdapterState :: IO KafkaAdapterState
 newKafkaAdapterState =
     KafkaAdapterState
@@ -93,6 +97,7 @@ kafkaSource state config =
                 batch <- pollMessageBatch config.pollTimeout config.batchSize
                 pure (Just (batch, ()))
 
+-- | Drop records already buffered above a pending retry barrier.
 dropStaleRecords ::
     (IOE :> es) =>
     KafkaAdapterState ->
@@ -113,7 +118,7 @@ Maps 'AckDecision' to Kafka operations:
 
 * 'AckOk' -> 'storeOffsetMessage' (mark offset ready for commit)
 * 'AckRetry' -> record seek barrier and seek partition back to the failed offset
-* 'AckDeadLetter' -> 'storeOffsetMessage' (DLQ deferred to future milestone)
+* 'AckDeadLetter' -> warn to stderr, then 'storeOffsetMessage' (DLQ deferred)
 * 'AckHalt' -> 'pausePartitions' (do NOT store offset; message will be re-consumed)
 -}
 mkAckHandle ::
@@ -139,7 +144,13 @@ mkAckHandle state config cr = AckHandle $ \case
                     }
                 ]
                 config.pollTimeout
-    AckDeadLetter _ ->
+    AckDeadLetter reason -> do
+        Effectful.liftIO $
+            hPutStrLn stderr $
+                "[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED (no DLQ producer): "
+                    <> show (cr.crTopic, cr.crPartition, cr.crOffset)
+                    <> " reason="
+                    <> show reason
         ackAttempt state (storeGuarded state cr)
     AckHalt _ ->
         ackAttempt state (pausePartitions [(cr.crTopic, cr.crPartition)])

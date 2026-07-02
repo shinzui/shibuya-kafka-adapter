@@ -7,7 +7,7 @@ import Effectful (Eff, IOE, liftIO, runEff, (:>))
 import Effectful.Dispatch.Dynamic (interpret)
 import Effectful.Error.Static (Error, runErrorNoCallStack, throwError)
 import Kafka.Consumer (RdKafkaRespErrT (..))
-import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), OffsetReset (..), PartitionOffset (..), Timestamp (..), TopicPartition (..))
+import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), PartitionOffset (..), Timestamp (..), TopicPartition (..))
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer (..))
 import Kafka.Types (BatchSize (..), KafkaError (..), PartitionId (..), Timeout (..), TopicName (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
@@ -224,7 +224,6 @@ testConfig =
         { topics = [TopicName "orders"]
         , pollTimeout = Timeout 100
         , batchSize = BatchSize 100
-        , offsetReset = Earliest
         }
 
 defaultMockState :: MockState

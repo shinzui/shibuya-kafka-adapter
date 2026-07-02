@@ -5,6 +5,7 @@ module Shibuya.Adapter.Kafka.Convert (
 
     -- * Trace Context
     extractTraceHeaders,
+    extractTraceHeadersFromList,
 
     -- * Timestamp Conversion
     timestampToUTCTime,
@@ -58,17 +59,18 @@ consumerRecordToEnvelope ::
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
     Envelope (Maybe ByteString)
 consumerRecordToEnvelope cr =
-    Envelope
-        { messageId = mkMessageId cr.crTopic cr.crPartition cr.crOffset
-        , cursor = Just (CursorInt (fromIntegral (unOffset cr.crOffset)))
-        , partition = Just (Text.pack (show (unPartitionId cr.crPartition)))
-        , enqueuedAt = timestampToUTCTime cr.crTimestamp
-        , traceContext = extractTraceHeaders cr.crHeaders
-        , headers = Just (headersToList cr.crHeaders)
-        , attempt = Nothing
-        , attributes = kafkaSpanAttributes cr.crPartition cr.crOffset
-        , payload = cr.crValue
-        }
+    let headerList = headersToList cr.crHeaders
+     in Envelope
+            { messageId = mkMessageId cr.crTopic cr.crPartition cr.crOffset
+            , cursor = Just (CursorInt (fromIntegral (unOffset cr.crOffset)))
+            , partition = Just (Text.pack (show (unPartitionId cr.crPartition)))
+            , enqueuedAt = timestampToUTCTime cr.crTimestamp
+            , traceContext = extractTraceHeadersFromList headerList
+            , headers = Just headerList
+            , attempt = Nothing
+            , attributes = kafkaSpanAttributes cr.crPartition cr.crOffset
+            , payload = cr.crValue
+            }
 
 {- | OpenTelemetry attributes that the framework's per-message span
 should carry for a Kafka-sourced envelope.
@@ -104,14 +106,15 @@ Looks for @traceparent@ and @tracestate@ header keys.
 Returns 'Nothing' if @traceparent@ is not present (it's required for valid context).
 -}
 extractTraceHeaders :: Headers -> Maybe TraceHeaders
-extractTraceHeaders headers =
+extractTraceHeaders = extractTraceHeadersFromList . headersToList
+
+-- | Extract W3C trace headers from an already materialized Kafka header list.
+extractTraceHeadersFromList :: [(ByteString, ByteString)] -> Maybe TraceHeaders
+extractTraceHeadersFromList headerList =
     case (lookup "traceparent" headerList, lookup "tracestate" headerList) of
         (Nothing, _) -> Nothing
         (Just tp, Nothing) -> Just [("traceparent", tp)]
         (Just tp, Just ts) -> Just [("traceparent", tp), ("tracestate", ts)]
-  where
-    headerList :: [(ByteString, ByteString)]
-    headerList = headersToList headers
 
 {- | Convert a Kafka 'Timestamp' to 'UTCTime'.
 
