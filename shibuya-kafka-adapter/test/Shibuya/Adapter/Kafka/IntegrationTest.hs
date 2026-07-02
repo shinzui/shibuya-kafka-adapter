@@ -43,8 +43,9 @@ import Shibuya.Core.Ingested (Ingested (..))
 import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..))
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
+import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
@@ -55,6 +56,7 @@ tests =
         , testCase "Multi-partition distribution" testMultiPartition
         , testCase "Batch polling" testBatchPolling
         , testCase "Graceful shutdown" testGracefulShutdown
+        , testCase "Idle graceful shutdown completes promptly" testIdleGracefulShutdown
         ]
 
 testBasicProduceConsume :: IO ()
@@ -175,3 +177,26 @@ testGracefulShutdown = withTestEnv $ \env -> do
         Right () -> pure ()
     envelopes <- reverse <$> readIORef ref
     assertEqual "consumed 3 before shutdown" 3 (length envelopes)
+
+testIdleGracefulShutdown :: IO ()
+testIdleGracefulShutdown = withTestEnv $ \env -> do
+    createTopic env
+
+    timedResult <- timeout 3000000 $ runEff . runError @KafkaError $ do
+        let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+            sub = topics [env.testTopic] <> offsetReset Earliest
+        runKafkaConsumer props sub $ do
+            let config =
+                    KafkaAdapterConfig
+                        { topics = [env.testTopic]
+                        , pollTimeout = Timeout 250
+                        , batchSize = BatchSize 100
+                        , offsetReset = Earliest
+                        }
+            Adapter{source, shutdown} <- kafkaAdapter config
+            shutdown
+            Stream.fold Fold.drain source
+    case timedResult of
+        Nothing -> assertFailure "idle shutdown did not terminate promptly"
+        Just (Left (_cs, err)) -> assertFailure $ "idle shutdown failed: " <> show err
+        Just (Right ()) -> pure ()

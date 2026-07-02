@@ -14,9 +14,11 @@ module Shibuya.Adapter.Kafka.Internal (
 )
 where
 
+import Control.Concurrent.STM (TVar, readTVarIO)
 import Data.ByteString (ByteString)
 import Data.Function ((&))
-import Effectful (Eff, (:>))
+import Effectful (Eff, IOE, (:>))
+import Effectful qualified
 import Effectful.Error.Static (Error, throwError)
 import Kafka.Consumer.Types (ConsumerRecord (..))
 import Kafka.Effectful.Consumer.Effect (
@@ -43,16 +45,22 @@ Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
 upstream handling.
 -}
 kafkaSource ::
-    (KafkaConsumer :> es) =>
+    (KafkaConsumer :> es, IOE :> es) =>
+    TVar Bool ->
     KafkaAdapterConfig ->
     Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
-kafkaSource config =
+kafkaSource shutdownVar config =
     skipNonFatal $
-        Stream.repeatM pollBatch
+        Stream.unfoldrM step ()
             & Stream.concatMap Stream.fromList
   where
-    pollBatch =
-        pollMessageBatch config.pollTimeout config.batchSize
+    step () = do
+        isShutdown <- Effectful.liftIO $ readTVarIO shutdownVar
+        if isShutdown
+            then pure Nothing
+            else do
+                batch <- pollMessageBatch config.pollTimeout config.batchSize
+                pure (Just (batch, ()))
 
 {- | Create an 'AckHandle' for a single 'ConsumerRecord'.
 

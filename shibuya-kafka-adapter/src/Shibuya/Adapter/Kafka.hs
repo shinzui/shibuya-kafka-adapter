@@ -76,20 +76,19 @@ module Shibuya.Adapter.Kafka (
 )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
+import Control.Concurrent.STM (atomically, newTVarIO, writeTVar)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, (:>))
-import Effectful.Error.Static (Error)
+import Effectful.Error.Static (Error, catchError, throwError)
+import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), OffsetReset (..))
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets)
-import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
+import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
 import Shibuya.Adapter.Kafka.Internal (ingestedStream, kafkaSource, mkIngested)
-import Streamly.Data.Stream (Stream)
-import Streamly.Data.Stream qualified as Stream
 
 {- | Create a Kafka adapter with the given configuration.
 
@@ -113,23 +112,15 @@ kafkaAdapter ::
     Eff es (Adapter es (Maybe ByteString))
 kafkaAdapter config = do
     shutdownVar <- liftIO $ newTVarIO False
-    let messageSource = ingestedStream mkIngested (kafkaSource config)
+    let messageSource = ingestedStream mkIngested (kafkaSource shutdownVar config)
     pure
         Adapter
             { adapterName = "kafka:" <> Text.intercalate "," (map unTopicName config.topics)
-            , source = takeUntilShutdown shutdownVar messageSource
+            , source = messageSource
             , shutdown = do
                 liftIO $ atomically $ writeTVar shutdownVar True
                 commitAllOffsets OffsetCommit
+                    `catchError` \_ err -> case err of
+                        KafkaResponseError RdKafkaRespErrNoOffset -> pure ()
+                        _ -> throwError err
             }
-
--- | Take from stream until shutdown signal is set.
-takeUntilShutdown ::
-    (IOE :> es) =>
-    TVar Bool ->
-    Stream (Eff es) a ->
-    Stream (Eff es) a
-takeUntilShutdown shutdownVar =
-    Stream.takeWhileM $ \_ -> do
-        isShutdown <- liftIO $ readTVarIO shutdownVar
-        pure (not isShutdown)

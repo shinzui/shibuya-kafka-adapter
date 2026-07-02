@@ -1,5 +1,5 @@
 {- | Adapter + Shibuya tracing demo, driving the message stream
-through Shibuya's @runWithMetrics@ so the framework's @processOne@
+through Shibuya's public @runApp@ API so the framework's @processOne@
 opens the per-message Consumer span. The Kafka adapter's
 'Shibuya.Adapter.Kafka.Convert.consumerRecordToEnvelope' populates
 'Envelope.attributes' with @messaging.system=kafka@ plus the typed
@@ -56,11 +56,10 @@ import OpenTelemetry.Trace (
  )
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Envelope (..))
-import Shibuya.Runner.Metrics (ProcessorId (..))
-import Shibuya.Runner.Supervised (runWithMetrics)
 import Shibuya.Telemetry.Effect (runTracing)
 import Streamly.Data.Stream qualified as Stream
 import System.Environment (getArgs, lookupEnv)
@@ -101,12 +100,12 @@ main = do
                 -- Cap the underlying source so the demo terminates.
                 let finiteAdapter =
                         upstream{source = Stream.take messagesToProcess upstream.source}
-                    handler ingested = do
+                    handler Message{envelope} = do
                         liftIO $
                             TIO.putStrLn $
                                 "[otel-demo] envelope="
-                                    <> Text.pack (show ingested.envelope)
-                        liftIO $ case ingested.envelope.traceContext of
+                                    <> Text.pack (show envelope)
+                        liftIO $ case envelope.traceContext of
                             Just hdrs ->
                                 TIO.putStrLn $
                                     "[otel-demo] envelope traceContext="
@@ -115,13 +114,13 @@ main = do
                                 TIO.putStrLn "[otel-demo] no trace context on envelope"
                         liftIO $ TIO.putStrLn "[otel-demo] AckOk"
                         pure AckOk
-                _ <-
-                    runWithMetrics
-                        (fromIntegral messagesToProcess)
-                        (ProcessorId topicName)
-                        finiteAdapter
-                        handler
-                pure ()
+                appResult <-
+                    runApp
+                        defaultAppConfig
+                        [(ProcessorId topicName, mkProcessor finiteAdapter handler)]
+                case appResult of
+                    Left appErr -> liftIO $ fail $ "[otel-demo] Shibuya app error: " <> show appErr
+                    Right appHandle -> waitApp appHandle
         case result of
             Left err -> putStrLn $ "[otel-demo] Error: " <> show err
             Right () -> TIO.putStrLn "[otel-demo] Done."
