@@ -5,6 +5,7 @@ module Shibuya.Adapter.Kafka.Internal (
     -- * Adapter State
     KafkaAdapterState (..),
     newKafkaAdapterState,
+    withConsumerLock,
 
     -- * Stream Construction
     kafkaSource,
@@ -20,6 +21,7 @@ module Shibuya.Adapter.Kafka.Internal (
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar (MVar, newMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO)
 import Data.ByteString (ByteString)
 import Data.Function ((&))
@@ -30,6 +32,7 @@ import Data.Time.Clock (NominalDiffTime)
 import Effectful (Eff, IOE, (:>))
 import Effectful qualified
 import Effectful.Error.Static (Error, catchError, throwError)
+import Effectful.Exception qualified as Exception
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), PartitionOffset (..), TopicPartition (..))
 import Kafka.Effectful.Consumer.Effect (
     KafkaConsumer,
@@ -39,7 +42,7 @@ import Kafka.Effectful.Consumer.Effect (
     storeOffsetMessage,
  )
 import Kafka.Streamly.Stream (isFatal, skipNonFatal)
-import Kafka.Types (KafkaError, PartitionId, TopicName)
+import Kafka.Types (KafkaError, PartitionId, Timeout (..), TopicName)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
@@ -56,6 +59,17 @@ data KafkaAdapterState = KafkaAdapterState
     { shutdownVar :: !(TVar Bool)
     , seekBarrier :: !(IORef (Map PartitionKey Offset))
     , fatalError :: !(IORef (Maybe KafkaError))
+    , consumerLock :: !(MVar ())
+    {- ^ Serializes every librdkafka consumer operation. Under
+    'Shibuya.App.runApp' the consumer handle is shared between the ingester
+    thread (which polls) and the processor thread (which seeks, stores,
+    pauses, and commits during finalize). Running @rd_kafka_consume_batch_queue@
+    concurrently with a seek/store on the same handle corrupts librdkafka's
+    internal fetch queue and crashes with a native SIGSEGV, so every consumer
+    call is wrapped in this mutex. Each poll is additionally bounded (see
+    @maxPollHoldMillis@) so the lock is released frequently and finalize is
+    never starved.
+    -}
     }
 
 {- | Allocate mutable state shared by the Kafka source, ack handles, and
@@ -67,13 +81,42 @@ newKafkaAdapterState =
         <$> newTVarIO False
         <*> newIORef Map.empty
         <*> newIORef Nothing
+        <*> newMVar ()
+
+{- | Run a librdkafka consumer operation while holding the shared consumer
+lock, guaranteeing no other consumer call runs concurrently on the same
+handle. See 'consumerLock' for why this is mandatory. The lock is always
+released, including when the action throws through the 'Error' @KafkaError@
+effect.
+-}
+withConsumerLock :: (IOE :> es) => KafkaAdapterState -> Eff es a -> Eff es a
+withConsumerLock state =
+    Exception.bracket_
+        (Effectful.liftIO (takeMVar state.consumerLock))
+        (Effectful.liftIO (putMVar state.consumerLock ()))
+
+{- | Upper bound (milliseconds) on how long a single poll may hold the
+consumer lock. The ingester polls under 'consumerLock' so it never races a
+concurrent seek/store on the shared consumer handle (see 'consumerLock').
+Because the poll blocks for its whole timeout when the queue is empty,
+holding the lock for a long @pollTimeout@ would starve — and, under GHC's
+deadlock detector, wedge — the finalize path that must seek to redeliver a
+retried message. Capping each poll keeps the lock available roughly every
+@maxPollHoldMillis@ so finalize can interleave and the ingester promptly
+re-polls to observe redelivered records. It also bounds shutdown latency.
+-}
+maxPollHoldMillis :: Int
+maxPollHoldMillis = 100
 
 {- | Create a stream of 'ConsumerRecord's by repeatedly polling the broker.
 
-Calls 'pollMessageBatch' in a loop, preserving errors as @Left@ values.
-Non-fatal errors (timeouts, partition EOF, etc.) are filtered out via
-'skipNonFatal' from hw-kafka-streamly. Fatal errors are preserved for
-upstream handling.
+Calls 'pollMessageBatch' in a loop under 'consumerLock', preserving errors as
+@Left@ values. Each poll uses a timeout capped at @maxPollHoldMillis@ so the
+lock stays available to the finalize path (which seeks, stores, pauses, and
+commits). Non-fatal errors (timeouts, partition EOF, etc.) are filtered out
+via 'skipNonFatal' from hw-kafka-streamly. Fatal errors are preserved for
+upstream handling; a fatal error recorded by the ack path (see 'fatalError')
+terminates the stream.
 -}
 kafkaSource ::
     (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
@@ -85,6 +128,7 @@ kafkaSource state config =
         Stream.unfoldrM step ()
             & Stream.concatMap Stream.fromList
   where
+    pollT = Timeout (min (unTimeout config.pollTimeout) maxPollHoldMillis)
     step () = do
         mbFatal <- Effectful.liftIO $ readIORef state.fatalError
         case mbFatal of
@@ -94,7 +138,7 @@ kafkaSource state config =
         if isShutdown
             then pure Nothing
             else do
-                batch <- pollMessageBatch config.pollTimeout config.batchSize
+                batch <- withConsumerLock state (pollMessageBatch pollT config.batchSize)
                 pure (Just (batch, ()))
 
 -- | Drop records already buffered above a pending retry barrier.
@@ -136,14 +180,15 @@ mkAckHandle state config cr = AckHandle $ \case
             atomicModifyIORef' state.seekBarrier $ \barriers ->
                 (Map.insert (partitionKey cr) cr.crOffset barriers, ())
         ackAttempt state $
-            seekPartitions
-                [ TopicPartition
-                    { tpTopicName = cr.crTopic
-                    , tpPartition = cr.crPartition
-                    , tpOffset = PartitionOffset (unOffset cr.crOffset)
-                    }
-                ]
-                config.pollTimeout
+            withConsumerLock state $
+                seekPartitions
+                    [ TopicPartition
+                        { tpTopicName = cr.crTopic
+                        , tpPartition = cr.crPartition
+                        , tpOffset = PartitionOffset (unOffset cr.crOffset)
+                        }
+                    ]
+                    config.pollTimeout
     AckDeadLetter reason -> do
         Effectful.liftIO $
             hPutStrLn stderr $
@@ -153,7 +198,7 @@ mkAckHandle state config cr = AckHandle $ \case
                     <> show reason
         ackAttempt state (storeGuarded state cr)
     AckHalt _ ->
-        ackAttempt state (pausePartitions [(cr.crTopic, cr.crPartition)])
+        ackAttempt state (withConsumerLock state (pausePartitions [(cr.crTopic, cr.crPartition)]))
 
 ackAttempt ::
     (Error KafkaError :> es, IOE :> es) =>
@@ -193,7 +238,7 @@ storeGuarded state cr = do
                     Just barrierOff
                         | cr.crOffset <= barrierOff -> (Map.delete (partitionKey cr) barriers, True)
                         | otherwise -> (barriers, False)
-    if shouldStore then storeOffsetMessage cr else pure ()
+    if shouldStore then withConsumerLock state (storeOffsetMessage cr) else pure ()
 
 partitionKey :: ConsumerRecord k v -> PartitionKey
 partitionKey cr = (cr.crTopic, cr.crPartition)

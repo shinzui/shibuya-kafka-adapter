@@ -129,7 +129,7 @@ import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets, subscri
 import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), PartitionId, Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
-import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, mkIngested, newKafkaAdapterState)
+import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, mkIngested, newKafkaAdapterState, withConsumerLock)
 import System.IO (hPutStrLn, stderr)
 
 {- | Create a Kafka adapter with the given configuration.
@@ -182,7 +182,7 @@ kafkaAdapterWith state config = do
             , source = messageSource
             , shutdown = do
                 liftIO $ atomically $ writeTVar state.shutdownVar True
-                commitAllOffsets OffsetCommit
+                withConsumerLock state (commitAllOffsets OffsetCommit)
                     `catchError` \_ err -> case err of
                         KafkaResponseError RdKafkaRespErrNoOffset -> pure ()
                         _ -> throwError err
