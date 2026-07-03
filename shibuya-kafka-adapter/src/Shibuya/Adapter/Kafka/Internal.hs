@@ -95,18 +95,29 @@ withConsumerLock state =
         (Effectful.liftIO (takeMVar state.consumerLock))
         (Effectful.liftIO (putMVar state.consumerLock ()))
 
-{- | Upper bound (milliseconds) on how long a single poll may hold the
-consumer lock. The ingester polls under 'consumerLock' so it never races a
-concurrent seek/store on the shared consumer handle (see 'consumerLock').
-Because the poll blocks for its whole timeout when the queue is empty,
-holding the lock for a long @pollTimeout@ would starve — and, under GHC's
-deadlock detector, wedge — the finalize path that must seek to redeliver a
-retried message. Capping each poll keeps the lock available roughly every
-@maxPollHoldMillis@ so finalize can interleave and the ingester promptly
-re-polls to observe redelivered records. It also bounds shutdown latency.
+{- | Upper bound (milliseconds) on how long any single blocking consumer call
+may hold the consumer lock. Every consumer call runs under 'consumerLock' so
+the poll never races a concurrent seek/store on the shared handle (see
+'consumerLock'). A call that blocks for its whole timeout — an empty poll, or a
+seek that cannot complete — would then hold the lock for that long and starve
+(and, under GHC's deadlock detector, wedge) the finalize path that must seek to
+redeliver a retried message. Capping the poll and seek timeouts at this value
+keeps the lock available roughly every @maxPollHoldMillis@ so finalize can
+interleave and the ingester promptly re-polls to observe redelivered records.
+It also bounds shutdown latency. The cap leaves ample headroom over a healthy
+seek (which acknowledges in single-digit milliseconds), so it only bites when a
+call is genuinely stuck — in which case surfacing it fast (via the ack path's
+bounded retry and fatal slot) is the desired behavior.
 -}
 maxPollHoldMillis :: Int
 maxPollHoldMillis = 100
+
+{- | Cap a caller-supplied timeout at 'maxPollHoldMillis' so a single blocking
+consumer call cannot hold the consumer lock longer than that. Applied to both
+the poll and the retry seek.
+-}
+boundedLockTimeout :: Timeout -> Timeout
+boundedLockTimeout t = Timeout (min (unTimeout t) maxPollHoldMillis)
 
 {- | Create a stream of 'ConsumerRecord's by repeatedly polling the broker.
 
@@ -128,7 +139,7 @@ kafkaSource state config =
         Stream.unfoldrM step ()
             & Stream.concatMap Stream.fromList
   where
-    pollT = Timeout (min (unTimeout config.pollTimeout) maxPollHoldMillis)
+    pollT = boundedLockTimeout config.pollTimeout
     step () = do
         mbFatal <- Effectful.liftIO $ readIORef state.fatalError
         case mbFatal of
@@ -188,7 +199,7 @@ mkAckHandle state config cr = AckHandle $ \case
                         , tpOffset = PartitionOffset (unOffset cr.crOffset)
                         }
                     ]
-                    config.pollTimeout
+                    (boundedLockTimeout config.pollTimeout)
     AckDeadLetter reason -> do
         Effectful.liftIO $
             hPutStrLn stderr $
