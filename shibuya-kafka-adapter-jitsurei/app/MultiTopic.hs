@@ -35,11 +35,11 @@ import Kafka.Effectful.Consumer (
  )
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Envelope (..), MessageId (..))
-import Streamly.Data.Fold qualified as Fold
+import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 
 main :: IO ()
@@ -58,20 +58,21 @@ main = do
 consumeTopic :: Text -> Text -> IO ()
 consumeTopic topicName grpId = do
     let topic = TopicName topicName
-    result <- runEff . runError @KafkaError $ do
+    result <- runEff . runError @KafkaError . runTracingNoop $ do
         let props = brokersList [BrokerAddress "localhost:9092"] <> groupId (ConsumerGroupId grpId) <> noAutoOffsetStore
             sub = topics [topic] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            Adapter{source} <- kafkaAdapter (defaultConfig [topic])
-            Stream.fold Fold.drain
-                $ Stream.mapM
-                    ( \(Ingested{envelope = Envelope{messageId = MessageId msgId, payload}, ack = AckHandle finalize}) -> do
-                        liftIO $
-                            TIO.putStrLn $
-                                "[kafka:" <> topicName <> "] " <> msgId <> " payload=" <> maybe "<null>" (Text.pack . BS8.unpack) payload
-                        finalize AckOk
-                    )
-                $ Stream.take 5 source
+            adapter <- kafkaAdapter (defaultConfig [topic])
+            let finiteAdapter = adapter{source = Stream.take 5 adapter.source}
+                handler Message{envelope = Envelope{messageId = MessageId msgId, payload}} = do
+                    liftIO $
+                        TIO.putStrLn $
+                            "[kafka:" <> topicName <> "] " <> msgId <> " payload=" <> maybe "<null>" (Text.pack . BS8.unpack) payload
+                    pure AckOk
+            appResult <- runApp defaultAppConfig [(ProcessorId topicName, mkProcessor finiteAdapter handler)]
+            case appResult of
+                Left appErr -> liftIO $ fail $ "Shibuya app error: " <> show appErr
+                Right appHandle -> waitApp appHandle
     case result of
         Left err -> putStrLn $ "[" <> show topicName <> "] Error: " <> show err
         Right () -> TIO.putStrLn $ "[kafka:" <> topicName <> "] Consumer finished."

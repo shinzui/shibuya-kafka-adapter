@@ -36,11 +36,11 @@ import Kafka.Effectful.Producer qualified as P
 import Kafka.Producer.Types (ProducePartition (..), ProducerRecord (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..))
-import Streamly.Data.Fold qualified as Fold
+import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 import System.Process (callCommand)
 
@@ -76,32 +76,33 @@ main = do
 
     -- Consume and print partition assignments
     TIO.putStrLn "[multi-partition] Consuming messages..."
-    result2 <- runEff . runError @KafkaError $ do
+    result2 <- runEff . runError @KafkaError . runTracingNoop $ do
         let props = brokersList [broker] <> groupId (ConsumerGroupId "multi-partition-group") <> noAutoOffsetStore
             sub = topics [topic] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            Adapter{source} <- kafkaAdapter (defaultConfig [topic])
-            Stream.fold Fold.drain
-                $ Stream.mapM
-                    ( \(Ingested{envelope = Envelope{messageId = MessageId msgId, partition, cursor, payload}, ack = AckHandle finalize}) -> do
-                        liftIO $ do
-                            let partStr = maybe "?" (Text.pack . show) partition
-                                cursorStr = case cursor of
-                                    Just (CursorInt n) -> Text.pack (show n)
-                                    _ -> "?"
-                                payloadStr = maybe "<null>" (Text.pack . BS8.unpack) payload
-                            TIO.putStrLn $
-                                "  "
-                                    <> msgId
-                                    <> " | partition="
-                                    <> partStr
-                                    <> " | offset="
-                                    <> cursorStr
-                                    <> " | payload="
-                                    <> payloadStr
-                        finalize AckOk
-                    )
-                $ Stream.take (length keys) source
+            adapter <- kafkaAdapter (defaultConfig [topic])
+            let finiteAdapter = adapter{source = Stream.take (length keys) adapter.source}
+                handler Message{envelope = Envelope{messageId = MessageId msgId, partition, cursor, payload}} = do
+                    liftIO $ do
+                        let partStr = maybe "?" id partition
+                            cursorStr = case cursor of
+                                Just (CursorInt n) -> Text.pack (show n)
+                                _ -> "?"
+                            payloadStr = maybe "<null>" (Text.pack . BS8.unpack) payload
+                        TIO.putStrLn $
+                            "  "
+                                <> msgId
+                                <> " | partition="
+                                <> partStr
+                                <> " | offset="
+                                <> cursorStr
+                                <> " | payload="
+                                <> payloadStr
+                    pure AckOk
+            appResult <- runApp defaultAppConfig [(ProcessorId "multi-partition", mkProcessor finiteAdapter handler)]
+            case appResult of
+                Left appErr -> liftIO $ fail $ "Shibuya app error: " <> show appErr
+                Right appHandle -> waitApp appHandle
     case result2 of
         Left err -> putStrLn $ "Error: " <> show err
         Right () -> TIO.putStrLn "[multi-partition] Done."

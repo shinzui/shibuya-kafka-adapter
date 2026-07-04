@@ -30,7 +30,7 @@ import Kafka.Types (
  )
 import OpenTelemetry.Attributes (Attribute, toAttribute, unkey)
 import OpenTelemetry.SemanticConventions qualified as Sem
-import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..), TraceHeaders)
+import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..), TraceHeaders, mkEnvelope)
 
 {- | Convert a Kafka 'ConsumerRecord' to a Shibuya 'Envelope'.
 
@@ -60,16 +60,14 @@ consumerRecordToEnvelope ::
     Envelope (Maybe ByteString)
 consumerRecordToEnvelope cr =
     let headerList = headersToList cr.crHeaders
-     in Envelope
-            { messageId = mkMessageId cr.crTopic cr.crPartition cr.crOffset
-            , cursor = Just (CursorInt (fromIntegral (unOffset cr.crOffset)))
+     in (mkEnvelope (mkMessageId cr.crTopic cr.crPartition cr.crOffset) cr.crValue)
+            { cursor = Just (CursorInt (fromIntegral (unOffset cr.crOffset)))
             , partition = Just (Text.pack (show (unPartitionId cr.crPartition)))
             , enqueuedAt = timestampToUTCTime cr.crTimestamp
             , traceContext = extractTraceHeadersFromList headerList
             , headers = Just headerList
             , attempt = Nothing
             , attributes = kafkaSpanAttributes cr.crPartition cr.crOffset
-            , payload = cr.crValue
             }
 
 {- | OpenTelemetry attributes that the framework's per-message span

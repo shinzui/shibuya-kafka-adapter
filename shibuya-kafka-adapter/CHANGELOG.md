@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0.0 — 2026-07-02
+## 0.8.0.0 — 2026-07-04
 
 ### Breaking Changes
 
@@ -10,7 +10,16 @@
   adapter metadata and is checked against the live subscription with a stderr
   warning on mismatch.
 
-### Changed
+### New Features
+
+- Add `kafkaAdapterWith`, `newKafkaAdapterState`, and
+  `kafkaRebalanceHandler` for callers that want rebalance logging and eager
+  cleanup of retry barriers for revoked partitions.
+- Compute Kafka headers once in `consumerRecordToEnvelope` and expose
+  `extractTraceHeadersFromList` for callers that already have a materialized
+  header list.
+
+### Bug Fixes
 
 - `AckRetry` now seeks the partition back to the failed message instead of
   storing the offset, preserving at-least-once redelivery.
@@ -24,15 +33,17 @@
   there is nothing to commit.
 - `AckDeadLetter` still stores the offset, but now emits a prominent stderr
   warning because this adapter does not include a DLQ producer.
-- Add `kafkaAdapterWith`, `newKafkaAdapterState`, and
-  `kafkaRebalanceHandler` for callers that want rebalance logging and eager
-  cleanup of retry barriers for revoked partitions.
+
+### Other Changes
+
+- Use the `shibuya-core 0.8.0.0` adapter-facing `mkEnvelope` and
+  `mkIngested` smart constructors, and update runnable examples to the
+  `runApp defaultAppConfig` / `Message` handler API.
 - Document the Serial-only processing contract, the dead-letter limitation,
   Kafka's lack of delivery-attempt counts, halt/eviction behavior, and shutdown
   ordering.
-- Compute Kafka headers once in `consumerRecordToEnvelope` and expose
-  `extractTraceHeadersFromList` for callers that already have a materialized
-  header list.
+- Keep the example and benchmark packages on the shared `0.8.0.0` repo version
+  line.
 
 ## 0.7.0.0 — 2026-06-05
 

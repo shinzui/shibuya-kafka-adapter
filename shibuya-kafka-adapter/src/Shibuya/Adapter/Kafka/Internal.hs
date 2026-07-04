@@ -47,7 +47,8 @@ import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Ingested)
+import Shibuya.Core.Ingested qualified as Core
 import Streamly.Data.Stream (Stream)
 import Streamly.Data.Stream qualified as Stream
 import System.IO (hPutStrLn, stderr)
@@ -270,11 +271,9 @@ mkIngested ::
     ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
     Ingested es (Maybe ByteString)
 mkIngested state config cr =
-    Ingested
-        { envelope = consumerRecordToEnvelope cr
-        , ack = mkAckHandle state config cr
-        , lease = Nothing
-        }
+    Core.mkIngested
+        (consumerRecordToEnvelope cr)
+        (mkAckHandle state config cr)
 
 {- | Transform a poll stream of @Either KafkaError ConsumerRecord@ into a
 stream of 'Ingested'.

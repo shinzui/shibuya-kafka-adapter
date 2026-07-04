@@ -41,11 +41,11 @@ import Kafka.Producer.Types (ProducePartition (..), ProducerRecord (..))
 import Kafka.Types (BatchSize (..), Timeout (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, stopApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Envelope (..), MessageId (..))
-import Streamly.Data.Fold qualified as Fold
+import Shibuya.Telemetry.Effect (runTracingNoop)
 import Streamly.Data.Stream qualified as Stream
 import System.Process (callCommand)
 
@@ -83,19 +83,21 @@ main = do
 
     -- Step 2: Consume all, AckOk, shutdown
     TIO.putStrLn "[offset-management] Consuming 5 messages (first pass)..."
-    result2 <- runEff . runError @KafkaError $ do
+    result2 <- runEff . runError @KafkaError . runTracingNoop $ do
         let props = brokersList [broker] <> groupId grp <> noAutoOffsetStore
             sub = topics [topic] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            Adapter{source, shutdown} <- kafkaAdapter (defaultConfig [topic])
-            Stream.fold Fold.drain
-                $ Stream.mapM
-                    ( \(Ingested{envelope = Envelope{messageId = MessageId msgId, payload}, ack = AckHandle finalize}) -> do
-                        liftIO $ TIO.putStrLn $ "  Consumed: " <> msgId <> " = " <> maybe "<null>" (Text.pack . BS8.unpack) payload
-                        finalize AckOk
-                    )
-                $ Stream.take 5 source
-            shutdown
+            adapter <- kafkaAdapter (defaultConfig [topic])
+            let finiteAdapter = adapter{source = Stream.take 5 adapter.source}
+                handler Message{envelope = Envelope{messageId = MessageId msgId, payload}} = do
+                    liftIO $ TIO.putStrLn $ "  Consumed: " <> msgId <> " = " <> maybe "<null>" (Text.pack . BS8.unpack) payload
+                    pure AckOk
+            appResult <- runApp defaultAppConfig [(ProcessorId "offset-management", mkProcessor finiteAdapter handler)]
+            case appResult of
+                Left appErr -> liftIO $ fail $ "Shibuya app error: " <> show appErr
+                Right appHandle -> do
+                    waitApp appHandle
+                    stopApp appHandle
     case result2 of
         Left err -> error $ "First consume failed: " <> show err
         Right () -> pure ()

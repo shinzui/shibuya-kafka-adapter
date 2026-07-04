@@ -29,46 +29,44 @@ import Kafka.Effectful.Consumer (
     runKafkaConsumer,
     topics,
  )
-import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
-import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Message (..))
 import Shibuya.Core.Types (Cursor (..), Envelope (..), MessageId (..))
-import Streamly.Data.Fold qualified as Fold
-import Streamly.Data.Stream qualified as Stream
+import Shibuya.Telemetry.Effect (runTracingNoop)
 
 main :: IO ()
 main = do
     TIO.putStrLn "[basic-consumer] Starting..."
-    result <- runEff . runError @KafkaError $ do
+    result <- runEff . runError @KafkaError . runTracingNoop $ do
         let props = brokersList [BrokerAddress "localhost:9092"] <> groupId (ConsumerGroupId "basic-consumer-group") <> noAutoOffsetStore
             sub = topics [TopicName "orders"] <> offsetReset Earliest
         runKafkaConsumer props sub $ do
-            Adapter{source} <- kafkaAdapter (defaultConfig [TopicName "orders"])
-            Stream.fold Fold.drain $
-                Stream.mapM
-                    ( \(Ingested{envelope = Envelope{messageId = MessageId msgId, partition, cursor, payload}, ack = AckHandle finalize}) -> do
-                        liftIO $ do
-                            let payloadStr = maybe "<null>" (Text.pack . BS8.unpack) payload
-                                partStr = maybe "?" (Text.pack . show) partition
-                                cursorStr = case cursor of
-                                    Just (CursorInt n) -> Text.pack (show n)
-                                    Just (CursorText t) -> t
-                                    Nothing -> "?"
-                            TIO.putStrLn $
-                                "[kafka:orders] messageId="
-                                    <> msgId
-                                    <> " partition="
-                                    <> partStr
-                                    <> " offset="
-                                    <> cursorStr
-                                    <> " payload="
-                                    <> payloadStr
-                        finalize AckOk
-                        liftIO $ TIO.putStrLn "[kafka:orders] AckOk"
-                    )
-                    source
+            adapter <- kafkaAdapter (defaultConfig [TopicName "orders"])
+            let handler Message{envelope = Envelope{messageId = MessageId msgId, partition, cursor, payload}} = do
+                    liftIO $ do
+                        let payloadStr = maybe "<null>" (Text.pack . BS8.unpack) payload
+                            partStr = maybe "?" id partition
+                            cursorStr = case cursor of
+                                Just (CursorInt n) -> Text.pack (show n)
+                                Just (CursorText t) -> t
+                                Nothing -> "?"
+                        TIO.putStrLn $
+                            "[kafka:orders] messageId="
+                                <> msgId
+                                <> " partition="
+                                <> partStr
+                                <> " offset="
+                                <> cursorStr
+                                <> " payload="
+                                <> payloadStr
+                    liftIO $ TIO.putStrLn "[kafka:orders] AckOk"
+                    pure AckOk
+            appResult <- runApp defaultAppConfig [(ProcessorId "orders", mkProcessor adapter handler)]
+            case appResult of
+                Left appErr -> liftIO $ fail $ "Shibuya app error: " <> show appErr
+                Right appHandle -> waitApp appHandle
     case result of
         Left err -> putStrLn $ "Error: " <> show err
         Right () -> TIO.putStrLn "[basic-consumer] Done."

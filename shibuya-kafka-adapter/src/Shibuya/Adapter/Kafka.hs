@@ -7,7 +7,7 @@ This adapter integrates with Apache Kafka via
 == Example Usage
 
 @
-import Shibuya.App (runApp, mkProcessor)
+import Shibuya.App (defaultAppConfig, runApp, mkProcessor)
 import Shibuya.Adapter.Kafka (kafkaAdapter, defaultConfig)
 import Kafka.Effectful.Consumer (runKafkaConsumer)
 import Kafka.Consumer (brokersList, groupId, noAutoOffsetStore)
@@ -18,7 +18,7 @@ main = runEff
   . runKafkaConsumer props sub
   $ do
       adapter <- kafkaAdapter (defaultConfig [TopicName \"orders\"])
-      result <- runApp IgnoreFailures 100
+      result <- runApp defaultAppConfig
         [ (ProcessorId \"orders\", mkProcessor adapter myHandler)
         ]
       ...
@@ -27,7 +27,8 @@ main = runEff
 == Message Lifecycle
 
 1. Messages are polled from Kafka in batches.
-2. Each message is wrapped as an @Ingested@ value with an @AckHandle@.
+2. Each message is wrapped as an @Ingested@ value with an @AckHandle@ via
+   Shibuya's adapter-facing smart constructors.
 3. On @AckOk@, the offset is stored locally; auto-commit or consumer close
    later flushes stored offsets to the broker.
 4. On @AckRetry@, the offset is not stored. The adapter seeks the partition
