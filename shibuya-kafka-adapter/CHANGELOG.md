@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0.1 — 2026-07-05
+
+### Other Changes
+
+- Require `shibuya-core ^>=0.8.0.1`, picking up the upstream patch release
+  with hot-path allocation fixes for `Async` and `Ahead` processing.
+- Keep the example and benchmark packages on the shared `0.8.0.1` repo
+  version line.
+
 ## 0.8.0.0 — 2026-07-04
 
 ### Breaking Changes
