@@ -75,3 +75,13 @@ clean:
 [group("build")]
 fmt:
     nix fmt
+
+
+# --- Docs ---
+
+# Validate the capability catalog (profile-enforced) and its concept graph
+[group("docs")]
+capabilities:
+    mori validate
+    okf validate docs/capabilities --profile docs/capabilities/profile.dhall --profile-enforce --log-enforce
+    okf graph docs/capabilities

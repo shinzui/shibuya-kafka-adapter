@@ -1,9 +1,9 @@
 let Schema =
-      https://raw.githubusercontent.com/shinzui/mori-schema/a3c59033a08c2eaef2cfba4a3c99fc9c192ca6d7/package.dhall
-        sha256:18258ef583580a897f4af3e7c86db0342afb42fb40efc535b217ba1089230141
+      https://raw.githubusercontent.com/shinzui/mori-schema/027403783777cbce0e87eb660a0b3d8119ebe8d2/package.dhall
+        sha256:d29ca03286afa92b7589d09b7a6d98ad8e39d11b255a4b8751f3327b0722fba3
 
 let Cookbook =
-      https://raw.githubusercontent.com/shinzui/mori-schema/a3c59033a08c2eaef2cfba4a3c99fc9c192ca6d7/extensions/cookbook/package.dhall
+      https://raw.githubusercontent.com/shinzui/mori-schema/027403783777cbce0e87eb660a0b3d8119ebe8d2/extensions/cookbook/package.dhall
         sha256:5d41094fcc37d35ddef48af2e0401764d0ae77f9bd25127a979473b964affbb7
 
 let ContentType = Cookbook.ContentType
