@@ -3,20 +3,34 @@ log_location: ./.dev/process-compose.log
 log_level: debug
 
 processes:
+  # Redpanda is no longer started here. This machine runs one shared, always-on
+  # cluster on Apple Container, managed by home/redpanda.nix in the dotfiles
+  # repository -- see its docs/redpanda.md. Colima is not involved.
+  #
+  # This process only checks the shared cluster is reachable and exits, so a
+  # missing cluster fails here with the fix rather than surfacing as a connection
+  # error deeper in. It deliberately does NOT stop or purge anything on shutdown:
+  # the cluster is shared with every other project on this machine, and the
+  # `rpk container purge` that used to live here would have destroyed their data
+  # along with this project's.
   redpanda:
-    command: rpk container start -n 1 --kafka-ports 9092
-    shutdown:
-      command: rpk container purge
-    readiness_probe:
-      exec:
-        command: "rpk cluster info"
-      initial_delay_seconds: 5
-      period_seconds: 5
-      timeout_seconds: 5
-      success_threshold: 1
-      failure_threshold: 10
+    command: |
+      if rpk cluster info -X brokers=127.0.0.1:9092 >/dev/null 2>&1; then
+        echo "Shared Redpanda is reachable at 127.0.0.1:9092."
+      else
+        echo "The shared Redpanda cluster is not running." >&2
+        echo "" >&2
+        echo "Start it with:" >&2
+        echo "" >&2
+        echo "    redpanda-up" >&2
+        echo "" >&2
+        echo "If that reports the Apple Container service is down:" >&2
+        echo "" >&2
+        echo "    container system start && redpanda-up" >&2
+        exit 1
+      fi
     availability:
-      restart: on_failure
+      restart: "no"
 
   jaeger:
     command: jaeger --config=file:.dev/jaeger-config.yaml
