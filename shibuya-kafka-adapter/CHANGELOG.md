@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0.0 — 2026-08-10
+
+### Breaking Changes
+
+- Require `shibuya-core ^>=0.9.0.0`. The upstream major bump adds the
+  `DeadLetterReason.ApplicationFailure` constructor and the total
+  `deadLetterReasonCode`, `deadLetterReasonDetail`, and
+  `renderDeadLetterReason` projections. The adapter itself needed no code
+  change for the new constructor, but consumers are forced onto the new
+  `shibuya-core` major and must review their own `DeadLetterReason` matches.
+- The `AckDeadLetter` stderr warning now renders the reason with
+  `renderDeadLetterReason` instead of derived `Show`. Application failures now
+  log as `reason=my.app.code: detail` rather than
+  `reason=ApplicationFailure (DeadLetterCode "my.app.code") "detail"`, matching
+  the canonical rendering `shibuya-pgmq-adapter` writes to its DLQ payloads.
+  The `[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED` prefix
+  and the offset-acknowledgement semantics are unchanged.
+- Keep the example and benchmark packages on the same `shibuya-core` bound and
+  repo version line.
+
 ## 0.8.0.1 — 2026-07-05
 
 ### Other Changes

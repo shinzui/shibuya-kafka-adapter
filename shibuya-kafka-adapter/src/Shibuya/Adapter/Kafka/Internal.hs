@@ -28,6 +28,7 @@ import Data.Function ((&))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime)
 import Effectful (Eff, IOE, (:>))
 import Effectful qualified
@@ -45,7 +46,7 @@ import Kafka.Streamly.Stream (isFatal, skipNonFatal)
 import Kafka.Types (KafkaError, PartitionId, Timeout (..), TopicName)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Convert (consumerRecordToEnvelope)
-import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
+import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..), renderDeadLetterReason)
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested)
 import Shibuya.Core.Ingested qualified as Core
@@ -207,7 +208,7 @@ mkAckHandle state config cr = AckHandle $ \case
                 "[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED (no DLQ producer): "
                     <> show (cr.crTopic, cr.crPartition, cr.crOffset)
                     <> " reason="
-                    <> show reason
+                    <> Text.unpack (renderDeadLetterReason reason)
         ackAttempt state (storeGuarded state cr)
     AckHalt _ ->
         ackAttempt state (withConsumerLock state (pausePartitions [(cr.crTopic, cr.crPartition)]))

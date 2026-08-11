@@ -62,6 +62,11 @@ consumer, and pass the same state to `kafkaAdapterWith`.
 - **Dead letters are dropped.** There is no DLQ producer. `AckDeadLetter` stores
   the offset and prints `[shibuya-kafka-adapter] WARNING: dead-lettered message
   DROPPED`, making the message unrecoverable from the group's committed position.
+  From 0.9.0.0 the warning renders the reason with Shibuya's canonical
+  `renderDeadLetterReason` (`reason=<code>` or `reason=<code>: <detail>`), so a
+  dead-letter code greps identically here and in the payloads
+  `mori://shinzui/shibuya-pgmq-adapter` writes to its DLQ. The log line is the
+  only record; it is not a durable or machine-consumed interface.
 - **No delivery-attempt counter.** Kafka does not expose per-message redelivery
   counts through this consumer API, so `Envelope.attempt` is always `Nothing`;
   handlers cannot bound retries by counting attempts. Use an external store or
