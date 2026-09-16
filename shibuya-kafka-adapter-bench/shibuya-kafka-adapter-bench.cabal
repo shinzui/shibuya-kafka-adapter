@@ -1,42 +1,51 @@
 cabal-version: 3.12
-name:          shibuya-kafka-adapter-bench
-version:       0.9.0.0
-synopsis:      Benchmarks for shibuya-kafka-adapter conversion functions
+name: shibuya-kafka-adapter-bench
+version: 0.9.0.0
+synopsis: Benchmarks for shibuya-kafka-adapter conversion functions
 description:
   Micro-benchmarks for the pure conversion hot path in shibuya-kafka-adapter:
   ConsumerRecord to Envelope conversion, W3C trace header extraction,
   and timestamp conversion.
 
-author:        Nadeem Bitar
-copyright:     2026 Nadeem Bitar
-maintainer:    nadeem@gmail.com
-homepage:      https://github.com/shinzui/shibuya-kafka-adapter
-bug-reports:   https://github.com/shinzui/shibuya-kafka-adapter/issues
-license:       MIT
-license-file:  LICENSE
-build-type:    Simple
-tested-with:   GHC ==9.12.2
-category:      Concurrency, Streaming
+author: Nadeem Bitar
+copyright: 2026 Nadeem Bitar
+maintainer: nadeem@gmail.com
+homepage: https://github.com/shinzui/shibuya-kafka-adapter
+bug-reports: https://github.com/shinzui/shibuya-kafka-adapter/issues
+license: MIT
+license-file: LICENSE
+build-type: Simple
+tested-with: ghc ==9.12.2
+category: Concurrency, Streaming
 
 source-repository head
-  type:     git
+  type: git
   location: https://github.com/shinzui/shibuya-kafka-adapter.git
 
 common warnings
   ghc-options:
-    -Wall -Wcompat -Widentities -Wincomplete-uni-patterns
-    -Wincomplete-record-updates -Wredundant-constraints
-    -fhide-source-paths -Wmissing-export-lists -Wpartial-fields
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-uni-patterns
+    -Wincomplete-record-updates
+    -Wredundant-constraints
+    -fhide-source-paths
+    -Wmissing-export-lists
+    -Wpartial-fields
     -Wmissing-deriving-strategies
 
 benchmark shibuya-kafka-adapter-bench
-  import:             warnings
-  type:               exitcode-stdio-1.0
-  main-is:            Main.hs
-  hs-source-dirs:     bench
-  default-language:   GHC2024
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: bench
+  default-language: GHC2024
   ghc-options:
-    -Wno-orphans -rtsopts -with-rtsopts=-A32m -fproc-alignment=64
+    -Wno-orphans
+    -rtsopts
+    -with-rtsopts=-A32m
+    -fproc-alignment=64
 
   default-extensions:
     DeriveAnyClass
@@ -51,13 +60,13 @@ benchmark shibuya-kafka-adapter-bench
     StandaloneDeriving
 
   build-depends:
-    , base                   ^>=4.21.0.0
-    , bytestring             ^>=0.12
-    , deepseq
-    , hw-kafka-client        >=5.3       && <6
-    , hw-kafka-streamly      ^>=0.2
-    , shibuya-core           ^>=0.9.0.0
-    , shibuya-kafka-adapter
-    , streamly               ^>=0.11
-    , streamly-core          ^>=0.3
-    , tasty-bench
+    base ^>=4.21.0.0,
+    bytestring ^>=0.12,
+    deepseq,
+    hw-kafka-client >=5.3 && <6,
+    hw-kafka-streamly ^>=0.2,
+    shibuya-core ^>=0.9.0.0,
+    shibuya-kafka-adapter,
+    streamly ^>=0.11,
+    streamly-core ^>=0.3,
+    tasty-bench,

@@ -8,11 +8,11 @@ import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
 main =
-    defaultMain $
-        testGroup
-            "shibuya-kafka-adapter"
-            [ AckHandleTest.tests
-            , AdapterTest.tests
-            , ConvertTest.tests
-            , IntegrationTest.tests
-            ]
+  defaultMain $
+    testGroup
+      "shibuya-kafka-adapter"
+      [ AckHandleTest.tests,
+        AdapterTest.tests,
+        ConvertTest.tests,
+        IntegrationTest.tests
+      ]
