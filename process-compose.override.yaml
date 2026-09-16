@@ -1,0 +1,48 @@
+---
+# process-compose.override.yaml — UNMANAGED, project-owned.
+#
+# process-compose merges this file over the generated process-compose.yaml with
+# no extra flags. Project-specific processes live here so seihou template
+# upgrades never overwrite them. Docs: https://f1bonacc1.github.io/process-compose/merge/
+
+version: "0.5"
+processes:
+  # Redpanda is NOT started here. This machine runs one shared, always-on cluster
+  # on Apple Container, managed by home/redpanda.nix in the dotfiles repository --
+  # see its docs/redpanda.md. This process only checks the shared cluster is
+  # reachable and exits, so a missing cluster fails here with the fix rather than
+  # surfacing as a connection error deeper in. It deliberately does NOT stop or
+  # purge anything on shutdown: the cluster is shared with every other project on
+  # this machine.
+  redpanda:
+    command: |
+      if rpk cluster info -X brokers=127.0.0.1:9092 >/dev/null 2>&1; then
+        echo "Shared Redpanda is reachable at 127.0.0.1:9092."
+      else
+        echo "The shared Redpanda cluster is not running." >&2
+        echo "" >&2
+        echo "Start it with:" >&2
+        echo "" >&2
+        echo "    redpanda-up" >&2
+        echo "" >&2
+        echo "If that reports the Apple Container service is down:" >&2
+        echo "" >&2
+        echo "    container system start && redpanda-up" >&2
+        exit 1
+      fi
+    availability:
+      restart: "no"
+
+  jaeger:
+    command: jaeger --config=file:.dev/jaeger-config.yaml
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: 16686
+        path: /
+      initial_delay_seconds: 2
+      period_seconds: 2
+      timeout_seconds: 2
+      failure_threshold: 15
+    availability:
+      restart: on_failure

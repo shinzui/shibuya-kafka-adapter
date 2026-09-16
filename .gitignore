@@ -7,3 +7,11 @@ CLAUDE.local.md
 dist-newstyle/
 docs/otel-tracing.md
 .agents/
+.envrc.local
+dist
+dist-*
+cabal-dev
+.direnv
+db/
+result
+result-*
