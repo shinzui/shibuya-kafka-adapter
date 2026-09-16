@@ -149,6 +149,7 @@ runMockConsumer mock =
     SeekPartitions tps _ -> recordSeek mock tps
     PollMessage _ -> error "AckHandleTest: PollMessage not exercised"
     PollMessageBatch _ _ -> error "AckHandleTest: PollMessageBatch not exercised"
+    PollMessageEither _ -> error "AckHandleTest: PollMessageEither not exercised"
     CommitOffsetMessage _ _ -> error "AckHandleTest: CommitOffsetMessage not exercised"
     CommitAllOffsets _ -> error "AckHandleTest: CommitAllOffsets not exercised"
     CommitPartitionsOffsets _ _ -> error "AckHandleTest: CommitPartitionsOffsets not exercised"

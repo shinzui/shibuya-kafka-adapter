@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0.1 — 2026-09-15
+
+### Other Changes
+
+- Support `effectful-core` 2.7: raise the upper bound from `<2.7` to `<2.8`.
+  Built and tested against effectful-core 2.7.1.2 on GHC 9.12.4; no source
+  changes were needed. Nothing here uses the APIs 2.7 deprecated, renamed, or
+  removed: `withLiftMap`, `stateM`/`modifyM`, the `*StateMVar` functions,
+  `Effectful.Internal.MTL`, `SharedSuffix`, `KnownEffects`, or the `LocalEnv`
+  `handlerEs` parameter. The lower bound stays at 2.6.1 so consumers are not
+  forced to upgrade.
+- Require `shibuya-core ^>=0.9.0.1` and `kafka-effectful ^>=0.3.1.0`. Both are
+  bounds-only upstream releases that widen `effectful` to `<2.8`; the previous
+  versions cap it at `<2.7` and would hold the whole build on effectful 2.6.
+  `kafka-effectful` 0.3.1.0 also fixes consumer crash-loops on partition EOF
+  and idle-commit conditions.
+- Keep the example and benchmark packages on the shared `0.9.0.1` repo version
+  line.
+
 ## 0.9.0.0 — 2026-08-10
 
 ### Breaking Changes
