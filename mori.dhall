@@ -1,10 +1,8 @@
 let Schema =
-      https://raw.githubusercontent.com/shinzui/mori-schema/027403783777cbce0e87eb660a0b3d8119ebe8d2/package.dhall
-        sha256:d29ca03286afa92b7589d09b7a6d98ad8e39d11b255a4b8751f3327b0722fba3
+      https://raw.githubusercontent.com/shinzui/mori-schema/3522f4a51181d73c9c90fc27a7c0838bd29ae95f/package.dhall
+        sha256:dcb19e2312e790bad14e622cc98a1281cd2298c5b564a2f0d0534d3c718d8803
 
 let emptyRuntime = { deployable = False, exposesApi = False }
-
-let emptyDeps = [] : List Schema.Dependency
 
 let emptyDocs = [] : List Schema.DocRef.Type
 
@@ -36,11 +34,19 @@ in  Schema.Project::{ project =
             "Kafka adapter with polling, offset commit semantics, partition awareness, and graceful shutdown"
         , runtime = emptyRuntime
         , dependencies =
-          [ Schema.Dependency.ByName "effectful/effectful"
+          [ Schema.Dependency.ByName "shinzui/shibuya:shibuya-core"
+          , Schema.Dependency.ByName "effectful/effectful:effectful-core"
+          , Schema.Dependency.ByName "composewell/streamly:streamly"
+          , Schema.Dependency.ByName "composewell/streamly:streamly-core"
           , Schema.Dependency.ByName "shinzui/kafka-effectful"
-          , Schema.Dependency.ByName "haskell-works/hw-kafka-client"
-          , Schema.Dependency.ByName "shinzui/shibuya"
-          , Schema.Dependency.ByName "composewell/streamly"
+          , Schema.Dependency.ByName
+              "haskell-works/hw-kafka-client:hw-kafka-client"
+          , Schema.Dependency.ByName
+              "shinzui/hw-kafka-streamly:hw-kafka-streamly"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-api"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-semantic-conventions"
           ]
         , docs = emptyDocs
         , config = emptyConfig
@@ -55,6 +61,13 @@ in  Schema.Project::{ project =
         , runtime = emptyRuntime
         , dependencies =
           [ Schema.Dependency.ByName "Bodigrim/tasty-bench"
+          , Schema.Dependency.ByName "shinzui/shibuya:shibuya-core"
+          , Schema.Dependency.ByName "composewell/streamly:streamly"
+          , Schema.Dependency.ByName "composewell/streamly:streamly-core"
+          , Schema.Dependency.ByName
+              "haskell-works/hw-kafka-client:hw-kafka-client"
+          , Schema.Dependency.ByName
+              "shinzui/hw-kafka-streamly:hw-kafka-streamly"
           ]
         , docs = emptyDocs
         , config = emptyConfig
@@ -67,19 +80,102 @@ in  Schema.Project::{ project =
             "Runnable examples: basic consumer, multi-topic, offset management, multi-partition"
         , visibility = Schema.Visibility.Internal
         , runtime = { deployable = True, exposesApi = False }
-        , dependencies = emptyDeps
+        , dependencies =
+          [ Schema.Dependency.ByName "shinzui/shibuya:shibuya-core"
+          , Schema.Dependency.ByName "effectful/effectful:effectful-core"
+          , Schema.Dependency.ByName "composewell/streamly:streamly"
+          , Schema.Dependency.ByName "composewell/streamly:streamly-core"
+          , Schema.Dependency.ByName "shinzui/kafka-effectful"
+          , Schema.Dependency.ByName
+              "haskell-works/hw-kafka-client:hw-kafka-client"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-api"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-sdk"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-exporter-otlp"
+          , Schema.Dependency.ByName
+              "iand675/hs-opentelemetry:hs-opentelemetry-instrumentation-hw-kafka-client"
+          ]
         , docs = emptyDocs
         , config = emptyConfig
         }
       ]
     , dependencies =
-      [ "shinzui/shibuya"
-      , "effectful/effectful"
-      , "composewell/streamly"
+      [ "shinzui/shibuya:shibuya-core"
+      , "effectful/effectful:effectful-core"
+      , "composewell/streamly:streamly"
+      , "composewell/streamly:streamly-core"
       , "shinzui/kafka-effectful"
-      , "haskell-works/hw-kafka-client"
+      , "haskell-works/hw-kafka-client:hw-kafka-client"
+      , "shinzui/hw-kafka-streamly:hw-kafka-streamly"
       , "confluentinc/librdkafka"
       , "Bodigrim/tasty-bench"
+      , "iand675/hs-opentelemetry:hs-opentelemetry-api"
+      , "iand675/hs-opentelemetry:hs-opentelemetry-semantic-conventions"
+      , "iand675/hs-opentelemetry:hs-opentelemetry-sdk"
+      , "iand675/hs-opentelemetry:hs-opentelemetry-exporter-otlp"
+      , "iand675/hs-opentelemetry:hs-opentelemetry-instrumentation-hw-kafka-client"
+      ]
+    , dependencyRefs =
+      [ Schema.MoriRef::{ namespace = "shinzui"
+        , name = "shibuya"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "shibuya-core"
+        }
+      , Schema.MoriRef::{ namespace = "effectful"
+        , name = "effectful"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "effectful-core"
+        }
+      , Schema.MoriRef::{ namespace = "composewell"
+        , name = "streamly"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "streamly"
+        }
+      , Schema.MoriRef::{ namespace = "composewell"
+        , name = "streamly"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "streamly-core"
+        }
+      , Schema.MoriRef::{ namespace = "shinzui", name = "kafka-effectful" }
+      , Schema.MoriRef::{ namespace = "haskell-works"
+        , name = "hw-kafka-client"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hw-kafka-client"
+        }
+      , Schema.MoriRef::{ namespace = "shinzui"
+        , name = "hw-kafka-streamly"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hw-kafka-streamly"
+        }
+      , Schema.MoriRef::{ namespace = "confluentinc", name = "librdkafka" }
+      , Schema.MoriRef::{ namespace = "Bodigrim", name = "tasty-bench" }
+      , Schema.MoriRef::{ namespace = "iand675"
+        , name = "hs-opentelemetry"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hs-opentelemetry-api"
+        }
+      , Schema.MoriRef::{ namespace = "iand675"
+        , name = "hs-opentelemetry"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hs-opentelemetry-semantic-conventions"
+        }
+      , Schema.MoriRef::{ namespace = "iand675"
+        , name = "hs-opentelemetry"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hs-opentelemetry-sdk"
+        }
+      , Schema.MoriRef::{ namespace = "iand675"
+        , name = "hs-opentelemetry"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hs-opentelemetry-exporter-otlp"
+        }
+      , Schema.MoriRef::{ namespace = "iand675"
+        , name = "hs-opentelemetry"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "hs-opentelemetry-instrumentation-hw-kafka-client"
+        }
       ]
     , agents =
       [ Schema.AgentHint::{ role = "adapter-dev"
