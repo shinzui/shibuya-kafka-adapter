@@ -32,7 +32,8 @@
 -- 3. On @AckOk@, the offset is stored locally; auto-commit or consumer close
 --    later flushes stored offsets to the broker.
 -- 4. On @AckRetry@, the offset is not stored. The adapter seeks the partition
---    back to the failed message so Kafka can redeliver it.
+--    back to the earliest unresolved delivery so Kafka can redeliver it. Later
+--    buffered callbacks cannot replace or commit past that recovery boundary.
 -- 5. On @AckDeadLetter@, the offset is stored after a loud stderr warning.
 -- 6. On @AckHalt@, the partition is paused and offset is not stored.
 --
@@ -65,9 +66,10 @@
 -- are filtered out of the poll stream. Any error that survives that filter is
 -- fatal by construction (for example, an SSL handshake failure, an authentication
 -- failure, or an invalid broker configuration) and terminates the stream by
--- throwing through the 'Effectful.Error.Static.Error' @KafkaError@ effect. The
--- caller observes the failure by receiving a @Left err@ from the
--- @runError \@KafkaError@ scope around 'Shibuya.App.runApp'.
+-- throwing through the 'Effectful.Error.Static.Error' @KafkaError@ effect.
+-- Exhausted acknowledgement operations instead throw a synchronous typed
+-- exception at the finalizer boundary; Shibuya records that as a processor
+-- failure even if ingestion has already ended.
 --
 -- == AckHalt Partition Pause Semantics
 --
@@ -84,15 +86,15 @@
 -- 'kafkaRebalanceHandler' is optional. Install it with
 -- @Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))@
 -- before creating the consumer when you want stderr visibility into assignment
--- changes and eager cleanup of retry barriers for revoked partitions. Without it,
--- the seek barrier still self-heals when messages are finalized at or below the
--- barrier offset. Cooperative rebalance fencing of in-flight work is outside this
--- adapter's scope.
+-- changes and assignment-generation fencing of callbacks retained by a revoked
+-- owner. Without it, retry recovery remains safe within one assignment, but stale
+-- callbacks are not fenced across ownership changes.
 module Shibuya.Adapter.Kafka
   ( -- * Adapter
     kafkaAdapter,
     kafkaAdapterWith,
     KafkaAdapterState,
+    KafkaAcknowledgementException (..),
     newKafkaAdapterState,
     kafkaRebalanceHandler,
 
@@ -116,8 +118,6 @@ where
 import Control.Concurrent.STM (atomically, writeTVar)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
-import Data.IORef (atomicModifyIORef')
-import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, (:>))
@@ -126,10 +126,10 @@ import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), RebalanceEvent (..))
 import Kafka.Consumer.Types qualified as KC
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets, subscription)
-import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), PartitionId, Timeout (..), TopicName (..))
+import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
-import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, mkIngested, newKafkaAdapterState, withConsumerLock)
+import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, markPartitionsAssigned, markPartitionsRevoked, mkIngested, newKafkaAdapterState, withConsumerLock)
 import System.IO (hPutStrLn, stderr)
 
 -- | Create a Kafka adapter with the given configuration.
@@ -208,8 +208,9 @@ warnOnSubscriptionMismatch config = do
 --
 -- Install with 'Kafka.Consumer.setCallback' and
 -- 'Kafka.Consumer.rebalanceCallback' before creating the consumer. The callback
--- logs every rebalance event to stderr and clears pending retry barriers for
--- revoked partitions. It does not fence in-flight work.
+-- logs every rebalance event to stderr, clears local retry state on revocation,
+-- and advances an assignment generation so late callbacks from a revoked owner
+-- cannot store, seek, or pause a later assignment.
 kafkaRebalanceHandler ::
   KafkaAdapterState ->
   KC.KafkaConsumer ->
@@ -218,12 +219,7 @@ kafkaRebalanceHandler ::
 kafkaRebalanceHandler state _consumer event = do
   hPutStrLn stderr $ "[shibuya-kafka-adapter] rebalance: " <> show event
   case event of
-    RebalanceRevoke revoked ->
-      clearRevokedBarriers revoked
-    _ ->
-      pure ()
-  where
-    clearRevokedBarriers :: [(TopicName, PartitionId)] -> IO ()
-    clearRevokedBarriers revoked =
-      atomicModifyIORef' state.seekBarrier $ \barriers ->
-        (foldr Map.delete barriers revoked, ())
+    RebalanceBeforeAssign assigned -> markPartitionsAssigned state assigned
+    RebalanceAssign assigned -> markPartitionsAssigned state assigned
+    RebalanceBeforeRevoke revoked -> markPartitionsRevoked state revoked
+    RebalanceRevoke revoked -> markPartitionsRevoked state revoked

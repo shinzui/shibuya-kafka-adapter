@@ -1,23 +1,28 @@
 module Shibuya.Adapter.Kafka.IntegrationTest (tests) where
 
+import Control.Concurrent.Async qualified as Async
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
 import Control.Exception (throwIO)
 import Control.Monad (forM)
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS8
-import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (nub, sort)
 import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
-import Effectful (runEff)
+import Effectful (Eff, Limit (..), Persistence (..), UnliftStrategy (..), runEff, withEffToIO)
 import Effectful.Error.Static (runError)
-import Kafka.Consumer.Types (OffsetCommit (..), OffsetReset (..))
+import Kafka.Consumer.Types (ConsumerRecord (..), OffsetCommit (..), OffsetReset (..), RebalanceEvent (..))
 import Kafka.Effectful.Consumer
   ( brokersList,
     groupId,
     noAutoOffsetStore,
     offsetReset,
+    rebalanceCallback,
     runKafkaConsumer,
+    setCallback,
     topics,
   )
 import Kafka.Effectful.Consumer.Effect (commitAllOffsets, pollMessageBatch)
@@ -28,16 +33,18 @@ import Kafka.TestEnv
     createTopicWithPartitions,
     produceKeyedMessages,
     produceMessages,
+    producePartitionMessages,
     withTestEnv,
   )
 import Kafka.Types
   ( BatchSize (..),
     KafkaError,
+    PartitionId (..),
     Timeout (..),
     TopicName (..),
   )
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter)
+import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
@@ -60,8 +67,12 @@ tests =
       testCase "Batch polling" testBatchPolling,
       testCase "Graceful shutdown" testGracefulShutdown,
       testCase "Idle graceful shutdown completes promptly" testIdleGracefulShutdown,
+      testCase "Repeated shutdown is idempotent" testRepeatedShutdown,
       testCase "AckRetry redelivers within the same session" testAckRetryRedelivery,
+      testCase "later buffered retry cannot replace the earliest recovery boundary" testBufferedRetryBoundary,
       testCase "AckRetry is not committed past when session exits" testAckRetryAbandonedSession,
+      testCase "late callback after revocation cannot advance the broker offset" testRevokedCallbackDoesNotCommit,
+      testCase "actual reassignment fences a late callback from the old owner" testActualReassignmentFence,
       testCase "Handler exception redelivers instead of skipping" testHandlerExceptionRedelivery
     ]
 
@@ -205,6 +216,22 @@ testIdleGracefulShutdown = withTestEnv $ \env -> do
     Just (Left (_cs, err)) -> assertFailure $ "idle shutdown failed: " <> show err
     Just (Right ()) -> pure ()
 
+testRepeatedShutdown :: IO ()
+testRepeatedShutdown = withTestEnv $ \env -> do
+  createTopic env
+
+  timedResult <- timeout 3000000 $ runEff . runError @KafkaError $ do
+    let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+        sub = topics [env.testTopic] <> offsetReset Earliest
+    runKafkaConsumer props sub $ do
+      Adapter {shutdown} <- kafkaAdapter (testConfig env)
+      shutdown
+      shutdown
+  case timedResult of
+    Nothing -> assertFailure "repeated shutdown did not terminate promptly"
+    Just (Left (_cs, err)) -> assertFailure $ "repeated shutdown failed: " <> show err
+    Just (Right ()) -> pure ()
+
 testAckRetryRedelivery :: IO ()
 testAckRetryRedelivery = withTestEnv $ \env -> do
   createTopic env
@@ -251,6 +278,55 @@ testAckRetryRedelivery = withTestEnv $ \env -> do
     Left (_cs, err) -> assertFailure $ "post-commit verification failed: " <> show err
     Right () -> pure ()
 
+testBufferedRetryBoundary :: IO ()
+testBufferedRetryBoundary = withTestEnv $ \env -> do
+  createTopic env
+  let payloads = ["boundary-42", "boundary-43"]
+  produceMessages env payloads
+
+  result <- runEff . runError @KafkaError $ do
+    let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+        sub = topics [env.testTopic] <> offsetReset Earliest
+    runKafkaConsumer props sub $ do
+      Adapter {source} <- kafkaAdapter (testConfig env)
+      firstBuffered <- liftIO $ newIORef Nothing
+      deliveryIndex <- liftIO $ newIORef (0 :: Int)
+      replayedPayloads <- liftIO $ newIORef ([] :: [ByteString])
+      Stream.fold Fold.drain
+        $ Stream.mapM
+          ( \ingested -> do
+              index <- liftIO $ atomicModifyIORef' deliveryIndex (\n -> (n + 1, n))
+              case index of
+                0 -> liftIO $ writeIORef firstBuffered (Just ingested)
+                1 -> do
+                  first <-
+                    liftIO (readIORef firstBuffered) >>= \case
+                      Just value -> pure value
+                      Nothing -> error "missing first buffered delivery"
+                  finalizeIngested first (AckRetry (RetryDelay 0))
+                  finalizeIngested ingested (AckRetry (RetryDelay 0))
+                _ -> do
+                  case ingested of
+                    Ingested {envelope = Envelope {payload = Just payload}} ->
+                      liftIO $ modifyIORef' replayedPayloads (<> [payload])
+                    _ -> pure ()
+                  finalizeIngested ingested AckOk
+          )
+        $ Stream.take 4 source
+      replayed <- liftIO $ readIORef replayedPayloads
+      liftIO $
+        assertEqual
+          "retry seeks the earliest delivery before its successor"
+          payloads
+          replayed
+      commitAllOffsets OffsetCommit
+  case result of
+    Left (_cs, err) -> assertFailure $ "buffered retry boundary failed: " <> show err
+    Right () -> pure ()
+
+  noRedelivery <- pollPayloads env 3
+  assertEqual "both replayed deliveries committed" [] noRedelivery
+
 testAckRetryAbandonedSession :: IO ()
 testAckRetryAbandonedSession = withTestEnv $ \env -> do
   createTopic env
@@ -294,6 +370,100 @@ testAckRetryAbandonedSession = withTestEnv $ \env -> do
 
   delivered <- readIORef redelivered
   assertBool ("expected ab-2 redelivery, saw " <> show delivered) ("ab-2" `elem` delivered)
+
+testRevokedCallbackDoesNotCommit :: IO ()
+testRevokedCallbackDoesNotCommit = withTestEnv $ \env -> do
+  createTopic env
+  produceMessages env ["revoked-late-callback"]
+
+  firstSession <- runEff . runError @KafkaError $ do
+    let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+        sub = topics [env.testTopic] <> offsetReset Earliest
+    runKafkaConsumer props sub $ do
+      state <- liftIO newKafkaAdapterState
+      Adapter {source} <- kafkaAdapterWith state (testConfig env)
+      delivered <- Stream.fold Fold.toList $ Stream.take 1 source
+      case delivered of
+        [ingested] -> do
+          liftIO $
+            kafkaRebalanceHandler
+              state
+              (error "consumer handle is not inspected")
+              (RebalanceRevoke [(env.testTopic, PartitionId 0)])
+          finalizeIngested ingested AckOk
+        other -> liftIO $ assertFailure $ "expected one delivery before revoke, got " <> show (length other)
+  case firstSession of
+    Left (_cs, err) -> assertFailure $ "revoked session failed: " <> show err
+    Right () -> pure ()
+
+  replayed <- consumeN env 1 AckOk
+  assertEqual
+    "revoked delivery remains recoverable"
+    [Just "revoked-late-callback"]
+    [envelope.payload | envelope <- replayed]
+
+testActualReassignmentFence :: IO ()
+testActualReassignmentFence = withTestEnv $ \env -> do
+  createTopicWithPartitions env 2
+  producePartitionMessages env [(0, "rebalance-partition-0"), (1, "rebalance-partition-1")]
+  state <- newKafkaAdapterState
+  events <- newTChanIO
+  handlesReady <- newEmptyMVar
+  releaseFirstConsumer <- newEmptyMVar
+
+  let callback consumer event = do
+        kafkaRebalanceHandler state consumer event
+        atomically $ writeTChan events event
+      firstProps =
+        brokersList [env.testBroker]
+          <> groupId env.testGroupId
+          <> noAutoOffsetStore
+          <> setCallback (rebalanceCallback callback)
+      sub = topics [env.testTopic] <> offsetReset Earliest
+      firstConsumer =
+        runEff . runError @KafkaError $
+          runKafkaConsumer firstProps sub $ do
+            Adapter {source} <- kafkaAdapterWith state (testConfig env)
+            delivered <- Stream.fold Fold.toList $ Stream.take 2 source
+            withEffToIO (ConcUnlift Persistent Unlimited) $ \runInIO -> do
+              putMVar handlesReady (map (callbackHandle runInIO) delivered)
+              takeMVar releaseFirstConsumer
+      secondConsumer =
+        runEff . runError @KafkaError $
+          runKafkaConsumer
+            (brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore)
+            sub
+            ( do
+                _ <- forM [1 .. 20 :: Int] $ \_ -> pollMessageBatch (Timeout 250) (BatchSize 100)
+                pure ()
+            )
+
+  Async.withAsync firstConsumer $ \firstAsync -> do
+    mbHandles <- timeout 10000000 (takeMVar handlesReady)
+    handles <- case mbHandles of
+      Nothing -> assertFailure "first consumer did not receive both partitions" >> pure []
+      Just value -> pure value
+    revoked <- Async.withAsync secondConsumer $ \secondAsync -> do
+      mbRevoked <- timeout 10000000 (awaitRevokedPartition env.testTopic events)
+      revoked <- case mbRevoked of
+        Nothing -> assertFailure "second consumer did not trigger a revocation" >> pure (PartitionId (-1))
+        Just value -> pure value
+      case lookup revoked handles of
+        Nothing -> assertFailure $ "no retained handle for revoked partition " <> show revoked
+        Just lateFinalize -> lateFinalize AckOk
+      putMVar releaseFirstConsumer ()
+      firstResult <- Async.wait firstAsync
+      case firstResult of
+        Left (_cs, err) -> assertFailure $ "first reassignment consumer failed: " <> show err
+        Right () -> pure ()
+      Async.cancel secondAsync
+      pure revoked
+
+    replayed <- pollPayloads env 5
+    let expected = if revoked == PartitionId 0 then "rebalance-partition-0" else "rebalance-partition-1"
+    assertBool
+      ("expected revoked partition payload to remain recoverable, saw " <> show replayed)
+      (expected `elem` replayed)
 
 testHandlerExceptionRedelivery :: IO ()
 testHandlerExceptionRedelivery = withTestEnv $ \env -> do
@@ -341,3 +511,40 @@ testConfig env =
 
 countPayload :: ByteString -> [ByteString] -> Int
 countPayload target = length . filter (== target)
+
+finalizeIngested :: Ingested es payload -> AckDecision -> Eff es ()
+finalizeIngested Ingested {ack = AckHandle finalize} = finalize
+
+pollPayloads :: TestEnv -> Int -> IO [ByteString]
+pollPayloads env pollCount = do
+  result <- runEff . runError @KafkaError $ do
+    let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+        sub = topics [env.testTopic] <> offsetReset Earliest
+    runKafkaConsumer props sub $ do
+      batches <- forM [1 .. pollCount] $ \_ ->
+        pollMessageBatch (Timeout 500) (BatchSize 100)
+      pure [payload | Right record <- concat batches, Just payload <- [record.crValue]]
+  case result of
+    Left (_cs, err) -> assertFailure ("poll verification failed: " <> show err) >> pure []
+    Right payloads -> pure payloads
+
+callbackHandle ::
+  (forall a. Eff es a -> IO a) ->
+  Ingested es payload ->
+  (PartitionId, AckDecision -> IO ())
+callbackHandle runInIO Ingested {envelope = Envelope {partition}, ack = AckHandle finalize} =
+  case partition of
+    Just partitionText -> (PartitionId (read (Text.unpack partitionText)), runInIO . finalize)
+    Nothing -> error "Kafka delivery did not carry a partition"
+
+awaitRevokedPartition :: TopicName -> TChan RebalanceEvent -> IO PartitionId
+awaitRevokedPartition topic events = atomically loop
+  where
+    loop = do
+      event <- readTChan events
+      case event of
+        RebalanceRevoke revoked ->
+          case [partition | (topic', partition) <- revoked, topic' == topic] of
+            partition : _ -> pure partition
+            [] -> loop
+        _ -> loop

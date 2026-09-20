@@ -7,6 +7,7 @@ module Kafka.TestEnv
     -- * Producing
     produceMessages,
     produceKeyedMessages,
+    producePartitionMessages,
 
     -- * Consuming via Adapter
     consumeN,
@@ -157,6 +158,25 @@ produceKeyedMessages env pairs = do
       flushProducer
   case result of
     Left err -> error $ "Failed to produce: " <> show err
+    Right () -> pure ()
+
+-- | Produce payloads to exact partitions for deterministic rebalance tests.
+producePartitionMessages :: TestEnv -> [(Int, ByteString)] -> IO ()
+producePartitionMessages env records = do
+  result <- runEff . runError @KafkaError $ do
+    runKafkaProducer (mkProducerProps env) $ do
+      forM_ records $ \(partition, payload) ->
+        produceMessage
+          ProducerRecord
+            { prTopic = env.testTopic,
+              prPartition = SpecifiedPartition partition,
+              prKey = Nothing,
+              prValue = Just payload,
+              prHeaders = mempty
+            }
+      flushProducer
+  case result of
+    Left err -> error $ "Failed to produce to partitions: " <> show err
     Right () -> pure ()
 
 -- | Consume N messages from the test topic via the adapter, applying the given ack decision.

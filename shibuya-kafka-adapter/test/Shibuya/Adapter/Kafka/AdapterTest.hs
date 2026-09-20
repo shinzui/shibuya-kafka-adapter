@@ -4,7 +4,7 @@
 module Shibuya.Adapter.Kafka.AdapterTest (tests) where
 
 import Data.ByteString (ByteString)
-import Effectful (runEff)
+import Effectful (Eff, runEff)
 import Effectful.Error.Static (runError)
 import Kafka.Consumer.Types (ConsumerRecord)
 import Kafka.Types (KafkaError (..))
@@ -28,7 +28,7 @@ tests =
 -- never fires.
 unreachableBuilder ::
   ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
-  Ingested es (Maybe ByteString)
+  Eff es (Ingested es (Maybe ByteString))
 unreachableBuilder _ = error "AdapterTest: Right branch should not be reached"
 
 testFatalPropagation :: IO ()

@@ -3,7 +3,10 @@
 module Shibuya.Adapter.Kafka.Internal
   ( -- * Adapter State
     KafkaAdapterState (..),
+    KafkaAcknowledgementException (..),
     newKafkaAdapterState,
+    markPartitionsAssigned,
+    markPartitionsRevoked,
     withConsumerLock,
 
     -- * Stream Construction
@@ -22,13 +25,15 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, newMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO)
+import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.Function ((&))
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', atomicWriteIORef, newIORef, readIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Time.Clock (NominalDiffTime)
+import Data.Word (Word64)
 import Effectful (Eff, IOE, (:>))
 import Effectful qualified
 import Effectful.Error.Static (Error, catchError, throwError)
@@ -55,10 +60,60 @@ import System.IO (hPutStrLn, stderr)
 
 type PartitionKey = (TopicName, PartitionId)
 
+newtype DeliveryToken = DeliveryToken Word64
+  deriving stock (Eq, Ord, Show)
+
+newtype AssignmentGeneration = AssignmentGeneration Word64
+  deriving stock (Eq, Show)
+
+data RetryBarrier = RetryBarrier
+  { offset :: !Offset,
+    retryToken :: !DeliveryToken
+  }
+
+data PartitionAckState = PartitionAckState
+  { barrier :: !(Maybe RetryBarrier),
+    validFromToken :: !DeliveryToken,
+    assignmentGeneration :: !AssignmentGeneration,
+    assigned :: !Bool
+  }
+
+data AckState = AckState
+  { nextDeliveryToken :: !Word64,
+    partitions :: !(Map PartitionKey PartitionAckState)
+  }
+
+data DeliveryAttempt = DeliveryAttempt
+  { partition :: !PartitionKey,
+    recordOffset :: !Offset,
+    token :: !DeliveryToken,
+    generation :: !AssignmentGeneration
+  }
+
+-- | A Kafka operation failed after the adapter's bounded retry budget. This is
+-- a synchronous exception so Shibuya's finalizer boundary can retry it and,
+-- when exhausted, retain a processor failure with the delivery identity.
+newtype KafkaAcknowledgementException = KafkaAcknowledgementException KafkaError
+  deriving stock (Show)
+
+instance Exception.Exception KafkaAcknowledgementException
+
+initialPartitionAckState :: PartitionAckState
+initialPartitionAckState =
+  PartitionAckState
+    { barrier = Nothing,
+      validFromToken = DeliveryToken 0,
+      assignmentGeneration = AssignmentGeneration 0,
+      assigned = True
+    }
+
+initialAckState :: AckState
+initialAckState = AckState {nextDeliveryToken = 1, partitions = Map.empty}
+
 -- | Mutable state shared by the source stream and ack handles.
 data KafkaAdapterState = KafkaAdapterState
   { shutdownVar :: !(TVar Bool),
-    seekBarrier :: !(IORef (Map PartitionKey Offset)),
+    ackState :: !(IORef AckState),
     fatalError :: !(IORef (Maybe KafkaError)),
     -- | Serializes every librdkafka consumer operation. Under
     --     'Shibuya.App.runApp' the consumer handle is shared between the ingester
@@ -78,9 +133,42 @@ newKafkaAdapterState :: IO KafkaAdapterState
 newKafkaAdapterState =
   KafkaAdapterState
     <$> newTVarIO False
-    <*> newIORef Map.empty
+    <*> newIORef initialAckState
     <*> newIORef Nothing
     <*> newMVar ()
+
+-- | Mark partitions assigned to this adapter generation. A revoke/assign cycle
+-- advances the generation, so ack handles retained from the previous owner can
+-- no longer store, seek, or pause the newly assigned partition.
+markPartitionsAssigned :: KafkaAdapterState -> [PartitionKey] -> IO ()
+markPartitionsAssigned state = setPartitionsAssigned state True
+
+-- | Mark partitions revoked and discard only the local retry ledger. Kafka's
+-- committed offset remains the durable recovery boundary; callbacks from the
+-- old generation are fenced by the incremented assignment generation.
+markPartitionsRevoked :: KafkaAdapterState -> [PartitionKey] -> IO ()
+markPartitionsRevoked state = setPartitionsAssigned state False
+
+setPartitionsAssigned :: KafkaAdapterState -> Bool -> [PartitionKey] -> IO ()
+setPartitionsAssigned state isAssigned keys =
+  atomicModifyIORef' state.ackState $ \ackState' ->
+    let partitions' = foldr (Map.alter (Just . transition . maybe initialPartitionAckState id)) ackState'.partitions keys
+     in (ackState' {partitions = partitions'}, ())
+  where
+    transition partitionState
+      | partitionState.assigned == isAssigned =
+          if isAssigned
+            then partitionState
+            else partitionState {barrier = Nothing}
+      | otherwise =
+          partitionState
+            { barrier = Nothing,
+              validFromToken = DeliveryToken 0,
+              assignmentGeneration = nextGeneration partitionState.assignmentGeneration,
+              assigned = isAssigned
+            }
+
+    nextGeneration (AssignmentGeneration generation') = AssignmentGeneration (generation' + 1)
 
 -- | Run a librdkafka consumer operation while holding the shared consumer
 -- lock, guaranteeing no other consumer call runs concurrently on the same
@@ -157,10 +245,12 @@ dropStaleRecords state =
   Stream.filterM $ \case
     Left _ -> pure True
     Right cr -> do
-      barriers <- Effectful.liftIO $ readIORef state.seekBarrier
-      pure $ case Map.lookup (partitionKey cr) barriers of
-        Nothing -> True
-        Just barrierOff -> cr.crOffset <= barrierOff
+      ackState' <- Effectful.liftIO $ readIORef state.ackState
+      let partitionState = Map.findWithDefault initialPartitionAckState (partitionKey cr) ackState'.partitions
+      pure $
+        partitionState.assigned && case partitionState.barrier of
+          Nothing -> True
+          Just retryBarrier -> cr.crOffset <= retryBarrier.offset
 
 -- | Create an 'AckHandle' for a single 'ConsumerRecord'.
 --
@@ -175,35 +265,79 @@ mkAckHandle ::
   KafkaAdapterState ->
   KafkaAdapterConfig ->
   ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
-  AckHandle es
-mkAckHandle state config cr = AckHandle $ \case
-  AckOk ->
-    ackAttempt state (storeGuarded state cr)
+  Eff es (AckHandle es)
+mkAckHandle state config cr = do
+  attempt <- Effectful.liftIO $ registerDelivery state cr
+  finalizerLock <- Effectful.liftIO $ newMVar ()
+  completed <- Effectful.liftIO $ newIORef False
+  pure $ AckHandle $ \decision ->
+    Exception.bracket_
+      (Effectful.liftIO (takeMVar finalizerLock))
+      (Effectful.liftIO (putMVar finalizerLock ()))
+      $ do
+        isCompleted <- Effectful.liftIO $ readIORef completed
+        unless isCompleted $ do
+          finalizeAttempt state config attempt cr decision
+          Effectful.liftIO $ atomicWriteIORef completed True
+
+registerDelivery :: KafkaAdapterState -> ConsumerRecord k v -> IO DeliveryAttempt
+registerDelivery state cr =
+  atomicModifyIORef' state.ackState $ \ackState' ->
+    let partition = partitionKey cr
+        partitionState = Map.findWithDefault initialPartitionAckState partition ackState'.partitions
+        token = DeliveryToken ackState'.nextDeliveryToken
+        attempt =
+          DeliveryAttempt
+            { partition,
+              recordOffset = cr.crOffset,
+              token,
+              generation = partitionState.assignmentGeneration
+            }
+        ackState'' =
+          ackState'
+            { nextDeliveryToken = ackState'.nextDeliveryToken + 1,
+              partitions = Map.insert partition partitionState ackState'.partitions
+            }
+     in (ackState'', attempt)
+
+finalizeAttempt ::
+  (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
+  KafkaAdapterState ->
+  KafkaAdapterConfig ->
+  DeliveryAttempt ->
+  ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
+  AckDecision ->
+  Eff es ()
+finalizeAttempt state config attempt cr = \case
+  AckOk -> storeGuarded state attempt cr (pure ())
   AckRetry (RetryDelay delay) -> do
     Effectful.liftIO $ delayRetry delay
-    Effectful.liftIO $
-      atomicModifyIORef' state.seekBarrier $ \barriers ->
-        (Map.insert (partitionKey cr) cr.crOffset barriers, ())
-    ackAttempt state $
-      withConsumerLock state $
-        seekPartitions
-          [ TopicPartition
-              { tpTopicName = cr.crTopic,
-                tpPartition = cr.crPartition,
-                tpOffset = PartitionOffset (unOffset cr.crOffset)
-              }
-          ]
-          (boundedLockTimeout config.pollTimeout)
-  AckDeadLetter reason -> do
-    Effectful.liftIO $
-      hPutStrLn stderr $
-        "[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED (no DLQ producer): "
-          <> show (cr.crTopic, cr.crPartition, cr.crOffset)
-          <> " reason="
-          <> Text.unpack (renderDeadLetterReason reason)
-    ackAttempt state (storeGuarded state cr)
-  AckHalt _ ->
-    ackAttempt state (withConsumerLock state (pausePartitions [(cr.crTopic, cr.crPartition)]))
+    mbTarget <- Effectful.liftIO $ recordRetry state attempt
+    case mbTarget of
+      Nothing -> pure ()
+      Just target ->
+        ackAttempt state $
+          withConsumerLock state $
+            seekPartitions
+              [ TopicPartition
+                  { tpTopicName = cr.crTopic,
+                    tpPartition = cr.crPartition,
+                    tpOffset = PartitionOffset (unOffset target)
+                  }
+              ]
+              (boundedLockTimeout config.pollTimeout)
+  AckDeadLetter reason ->
+    storeGuarded state attempt cr $
+      Effectful.liftIO $
+        hPutStrLn stderr $
+          "[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED (no DLQ producer): "
+            <> show (cr.crTopic, cr.crPartition, cr.crOffset)
+            <> " reason="
+            <> Text.unpack (renderDeadLetterReason reason)
+  AckHalt _ -> do
+    isAccepted <- Effectful.liftIO $ deliveryIsAccepted state attempt
+    when isAccepted $
+      ackAttempt state (withConsumerLock state (pausePartitions [(cr.crTopic, cr.crPartition)]))
 
 ackAttempt ::
   (Error KafkaError :> es, IOE :> es) =>
@@ -218,7 +352,9 @@ ackAttempt state action = go (1 :: Int)
     go attempt =
       action `catchError` \_ err ->
         if isFatal err || attempt >= maxAttempts
-          then Effectful.liftIO $ recordFatalError state err
+          then do
+            Effectful.liftIO $ recordFatalError state err
+            Exception.throwIO (KafkaAcknowledgementException err)
           else do
             Effectful.liftIO $ threadDelay retryDelayMicros
             go (attempt + 1)
@@ -230,20 +366,68 @@ recordFatalError state err =
     Nothing -> (Just err, ())
 
 storeGuarded ::
-  (KafkaConsumer :> es, IOE :> es) =>
+  (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
   KafkaAdapterState ->
+  DeliveryAttempt ->
   ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
+  Eff es () ->
   Eff es ()
-storeGuarded state cr = do
-  shouldStore <-
-    Effectful.liftIO $
-      atomicModifyIORef' state.seekBarrier $ \barriers ->
-        case Map.lookup (partitionKey cr) barriers of
-          Nothing -> (barriers, True)
-          Just barrierOff
-            | cr.crOffset <= barrierOff -> (Map.delete (partitionKey cr) barriers, True)
-            | otherwise -> (barriers, False)
-  if shouldStore then withConsumerLock state (storeOffsetMessage cr) else pure ()
+storeGuarded state attempt cr beforeStore = do
+  shouldStore <- Effectful.liftIO $ claimStore state attempt
+  when shouldStore $ do
+    beforeStore
+    ackAttempt state (withConsumerLock state (storeOffsetMessage cr))
+
+recordRetry :: KafkaAdapterState -> DeliveryAttempt -> IO (Maybe Offset)
+recordRetry state attempt =
+  atomicModifyIORef' state.ackState $ \ackState' ->
+    let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
+     in if not (attemptIsAccepted partitionState attempt)
+          then (ackState', Nothing)
+          else
+            let retryBarrier = case partitionState.barrier of
+                  Nothing -> RetryBarrier attempt.recordOffset attempt.token
+                  Just existing
+                    | attempt.recordOffset < existing.offset -> RetryBarrier attempt.recordOffset attempt.token
+                    | attempt.recordOffset == existing.offset && attempt.token > existing.retryToken ->
+                        existing {retryToken = attempt.token}
+                    | otherwise -> existing
+                partitionState' = partitionState {barrier = Just retryBarrier}
+                ackState'' = ackState' {partitions = Map.insert attempt.partition partitionState' ackState'.partitions}
+             in (ackState'', Just retryBarrier.offset)
+
+claimStore :: KafkaAdapterState -> DeliveryAttempt -> IO Bool
+claimStore state attempt =
+  atomicModifyIORef' state.ackState $ \ackState' ->
+    let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
+     in if not (attemptIsAccepted partitionState attempt)
+          then (ackState', False)
+          else case partitionState.barrier of
+            Nothing -> (ackState', True)
+            Just retryBarrier
+              | attempt.recordOffset > retryBarrier.offset -> (ackState', False)
+              | attempt.recordOffset < retryBarrier.offset -> (ackState', True)
+              | attempt.token <= retryBarrier.retryToken -> (ackState', False)
+              | otherwise ->
+                  let partitionState' =
+                        partitionState
+                          { barrier = Nothing,
+                            validFromToken = max partitionState.validFromToken attempt.token
+                          }
+                      ackState'' = ackState' {partitions = Map.insert attempt.partition partitionState' ackState'.partitions}
+                   in (ackState'', True)
+
+deliveryIsAccepted :: KafkaAdapterState -> DeliveryAttempt -> IO Bool
+deliveryIsAccepted state attempt = do
+  ackState' <- readIORef state.ackState
+  let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
+  pure $ attemptIsAccepted partitionState attempt
+
+attemptIsAccepted :: PartitionAckState -> DeliveryAttempt -> Bool
+attemptIsAccepted partitionState attempt =
+  partitionState.assigned
+    && partitionState.assignmentGeneration == attempt.generation
+    && attempt.token >= partitionState.validFromToken
 
 partitionKey :: ConsumerRecord k v -> PartitionKey
 partitionKey cr = (cr.crTopic, cr.crPartition)
@@ -261,11 +445,13 @@ mkIngested ::
   KafkaAdapterState ->
   KafkaAdapterConfig ->
   ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
-  Ingested es (Maybe ByteString)
-mkIngested state config cr =
-  Core.mkIngested
-    (consumerRecordToEnvelope cr)
-    (mkAckHandle state config cr)
+  Eff es (Ingested es (Maybe ByteString))
+mkIngested state config cr = do
+  ackHandle <- mkAckHandle state config cr
+  pure $
+    Core.mkIngested
+      (consumerRecordToEnvelope cr)
+      ackHandle
 
 -- | Transform a poll stream of @Either KafkaError ConsumerRecord@ into a
 -- stream of 'Ingested'.
@@ -280,10 +466,10 @@ mkIngested state config cr =
 -- injects a synthetic @Left@ without standing up a real consumer.
 ingestedStream ::
   (Error KafkaError :> es) =>
-  (ConsumerRecord (Maybe ByteString) (Maybe ByteString) -> Ingested es (Maybe ByteString)) ->
+  (ConsumerRecord (Maybe ByteString) (Maybe ByteString) -> Eff es (Ingested es (Maybe ByteString))) ->
   Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString))) ->
   Stream (Eff es) (Ingested es (Maybe ByteString))
 ingestedStream mkI =
   Stream.mapMaybeM $ \case
-    Right cr -> pure (Just (mkI cr))
+    Right cr -> Just <$> mkI cr
     Left err -> throwError err
