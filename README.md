@@ -10,7 +10,7 @@ Run this adapter with serial message processing only. librdkafka stores the high
 
 Offset reset policy belongs to the `Subscription` passed to `runKafkaConsumer`, for example `topics [TopicName "orders"] <> offsetReset Earliest`. `KafkaAdapterConfig.topics` is metadata used for adapter naming and a construction-time warning if it differs from the live subscription.
 
-`AckRetry` seeks the partition back to the failed message and does not store that message's offset. `AckDeadLetter` stores the offset so the consumer group moves on, prints `[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED` to stderr, and makes the message unrecoverable from the group's committed position. This adapter does not include a DLQ producer.
+`AckRetry` preserves the earliest unresolved delivery for the partition, seeks back to that offset, and does not store it. Later buffered callbacks cannot replace or cross that recovery boundary; only a newer replay of the boundary delivery can resolve it. `AckDeadLetter` stores the offset so the consumer group moves on, prints `[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED` to stderr, and makes the message unrecoverable from the group's committed position. This adapter does not include a DLQ producer.
 
 Kafka does not expose a per-message delivery-attempt counter through this consumer API, so `Envelope.attempt` is always `Nothing`. Handlers that need bounded retries must use their own store or return `AckHalt` to stop the stream.
 
@@ -18,7 +18,7 @@ Kafka does not expose a per-message delivery-attempt counter through this consum
 
 On shutdown, the adapter commits offsets stored so far and signals the source stream to stop. Let the surrounding `runKafkaConsumer` scope end normally after stopping the app so the consumer close path can flush offsets stored during the drain window.
 
-For rebalance visibility, create state with `newKafkaAdapterState`, install `Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))` before consumer creation, and pass the same state to `kafkaAdapterWith`. The helper logs rebalance events and clears retry barriers for revoked partitions; in-flight fencing for cooperative rebalances is out of scope.
+For rebalance fencing, create state with `newKafkaAdapterState`, install `Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))` before consumer creation, and pass the same state to `kafkaAdapterWith`. The helper logs assignment changes, clears local recovery state on revocation, and advances a partition generation so callbacks retained by the old owner cannot store, seek, or pause the new assignment. Callers that omit the optional callback do not get that ownership fence.
 
 ## Packages
 

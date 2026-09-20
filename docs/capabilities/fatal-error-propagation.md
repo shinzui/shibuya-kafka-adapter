@@ -1,10 +1,21 @@
 ---
 title: "Fatal-vs-non-fatal Kafka error propagation"
 type: Capability
-description: "Filter non-fatal Kafka errors out of the poll stream and surface any fatal error to the caller through the Error KafkaError effect."
+description: "Filter non-fatal poll errors and surface fatal poll or acknowledgement failures directly to the caller."
 generated:
-  by: claude-cli/sonnet-4.5
-  at: "2026-08-08T00:00:00Z"
+  by: codex-cli/gpt-6-astra
+  at: "2026-09-20T22:30:00Z"
+reviews:
+  - kind: model
+    reviewer: process:openai-codex
+    reviewed_at: "2026-09-20T22:30:00Z"
+    document_timestamp: "2026-09-20T22:30:00Z"
+    scope: content-and-metadata
+    outcome: approved
+    context: "Repository source, acknowledgement failure tests, core lifecycle integration evidence, and the EP-40 lifecycle audit."
+    provider: openai
+    model: gpt-6-astra
+    effort: high
 capabilityId: CAP-4
 provider: mori://shinzui/shibuya-kafka-adapter
 status: shipped
@@ -15,6 +26,7 @@ packages:
 interface:
   - Shibuya.Adapter.Kafka.kafkaAdapter
   - Shibuya.Adapter.Kafka.KafkaError
+  - Shibuya.Adapter.Kafka.KafkaAcknowledgementException
 requires:
   - CAP-1
 evidence:
@@ -24,6 +36,9 @@ evidence:
   - kind: example
     resource: shibuya-kafka-adapter-jitsurei/app/FatalErrorDemo.hs
     proves: "A runnable demonstration of a fatal error terminating the app and surfacing to the caller."
+  - kind: test
+    resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/AckHandleTest.hs
+    proves: "Persistent store, seek, and pause failures throw `KafkaAcknowledgementException`; the core integration case retains the exhausted finalizer as `LifecycleFailed` after source completion."
 ---
 
 # Fatal-vs-non-fatal Kafka error propagation
@@ -47,21 +62,29 @@ case result of
   Right ()        -> pure ()
 ```
 
+Acknowledgement failures have a separate terminal route. A transient
+store/seek/pause error is retried within a small bounded budget. If that budget
+is exhausted, the adapter records the Kafka error for source diagnostics and
+throws `KafkaAcknowledgementException` synchronously from the `AckHandle`.
+Shibuya's finalizer boundary retries it according to core policy and retains a
+`LifecycleFailed` outcome if it remains exhausted. This direct route does not
+depend on another source poll after ingestion has ended.
+
 ## History
 
 Non-fatal filtering via `skipNonFatal`/`isFatal` has been present since
-`0.1.0.0`. The ack path's error handling was materially refined in `0.8.0.0`:
-transient ack-path Kafka errors now retry briefly and persistent ones are
-classified as adapter (source-terminating) errors rather than handler errors, so
-a stuck store/seek/pause surfaces through this same fatal path instead of being
-misattributed to the handler.
+`0.1.0.0`. The ack path's error handling was materially refined in `0.8.0.0`,
+when transient errors gained bounded retries and persistent errors gained a
+fatal diagnostic slot. The current unreleased change adds the direct typed
+exception route so a stuck store/seek/pause cannot disappear when the source has
+already ended.
 
 ## Limits
 
 - **Classification depends on `hw-kafka-streamly`.** What counts as "fatal" is
   `Kafka.Streamly.Stream.isFatal` from an upstream dependency; changes to its
   classification change what this capability filters versus surfaces.
-- **The strongest test is broker-free and synthetic.** `AdapterTest` injects a
+- **The strongest poll-error test is broker-free and synthetic.** `AdapterTest` injects a
   synthetic fatal `Left` to prove propagation; the ack-path retry-then-fatal
   behavior is proven in `AckHandleTest` with a mocked consumer. Neither
   exercises a real broker producing a genuine fatal error.

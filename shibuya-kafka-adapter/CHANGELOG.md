@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- Preserve the earliest unresolved delivery when multiple buffered Kafka
+  callbacks request retry. Delivery tokens distinguish an original callback
+  from the replay that may resolve its recovery boundary, so later buffered or
+  duplicate callbacks cannot advance the stored offset past unresolved work.
+- Throw exhausted acknowledgement operations synchronously from the finalizer
+  boundary. Core can now retain them as processor failures even after ingestion
+  has stopped instead of depending on a future source poll of the fatal slot.
+  The public `KafkaAcknowledgementException` carries the underlying
+  `KafkaError` for callers that need to classify it.
+- Fence callbacks retained across a revoke/assign cycle when callers install
+  `kafkaRebalanceHandler`. Assignment generations prevent an old owner from
+  storing, seeking, or pausing a partition after reassignment.
+- Serialize each delivery finalizer with exception-safe ownership. Successful
+  duplicates are no-ops, while failed or cancelled attempts remain retryable.
+
+### Other Changes
+
+- Add deterministic reference-model, cancellation, timeout, terminal-failure,
+  repeated-shutdown, buffered-retry, restart, and actual-reassignment coverage.
+- Keep the documented absence of a DLQ producer: `AckDeadLetter` still warns
+  and stores the offset deliberately.
+
 ## 0.9.0.1 — 2026-09-15
 
 ### Other Changes

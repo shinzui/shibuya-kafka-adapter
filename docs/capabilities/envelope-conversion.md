@@ -5,6 +5,17 @@ description: "Convert a Kafka ConsumerRecord to a Shibuya Envelope with W3C trac
 generated:
   by: claude-cli/sonnet-4.5
   at: "2026-08-08T00:00:00Z"
+reviews:
+  - kind: model
+    reviewer: process:openai-codex
+    reviewed_at: "2026-09-20T22:30:00Z"
+    document_timestamp: "2026-08-08T00:00:00Z"
+    scope: content-and-metadata
+    outcome: approved
+    context: "Repository source, the full adapter test suite, existing capability evidence, and the EP-40 lifecycle audit."
+    provider: openai
+    model: gpt-6-astra
+    effort: high
 capabilityId: CAP-3
 provider: mori://shinzui/shibuya-kafka-adapter
 status: shipped
