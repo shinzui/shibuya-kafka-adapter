@@ -70,3 +70,42 @@ benchmark shibuya-kafka-adapter-bench
     streamly ^>=0.11,
     streamly-core ^>=0.3,
     tasty-bench,
+
+-- EP-45 live-broker performance and restart fixture.  It owns a uniquely
+-- named topic/group, records broker lag and retained heap, and emits the common
+-- adapter-soak CSV consumed by shibuya's release analyzer.
+executable lifecycle-live
+  import: warnings
+  main-is: LifecycleLive.hs
+  hs-source-dirs: app
+  default-language: GHC2024
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N4 -T -A32m"
+    -O2
+
+  default-extensions:
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DuplicateRecordFields
+    LambdaCase
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+
+  build-depends:
+    aeson ^>=2.2,
+    async ^>=2.2,
+    base ^>=4.21.0.0,
+    bytestring ^>=0.12,
+    effectful >=2.6 && <2.8,
+    hw-kafka-client >=5.3 && <6,
+    kafka-effectful ^>=0.3.1.0,
+    process,
+    shibuya-core ^>=0.9.0.1,
+    shibuya-kafka-adapter,
+    stm,
+    text ^>=2.1,
+    time,
