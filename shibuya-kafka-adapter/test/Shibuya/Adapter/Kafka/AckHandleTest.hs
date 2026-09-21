@@ -193,7 +193,10 @@ testRepeatedRetry = do
 
 testReferenceModelSeeds :: IO ()
 testReferenceModelSeeds =
-  mapM_ runSeed [400040 .. 400049]
+  -- EP-44's integrated release gate requires at least 1,000 recorded model
+  -- cases. Keep the range deterministic so a failure names its replayable
+  -- seed and the ordinary package suite exercises the full gate.
+  mapM_ runSeed [400040 .. 401039]
   where
     runSeed seed = do
       let generator = mkStdGen seed
