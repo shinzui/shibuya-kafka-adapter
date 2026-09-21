@@ -41,7 +41,10 @@
       };
     in
     {
-      packages.default = haskellPackages.callCabal2nix "shibuya-kafka-adapter" inputs.self { };
+      # This repository is a multi-package Cabal project, so the published
+      # library lives below the flake root. Project-specific dependency pins
+      # are applied by flake.module.nix.
+      packages.default = haskellPackages.callCabal2nix "shibuya-kafka-adapter" ../shibuya-kafka-adapter { };
 
       devShells.default = mkProjectShell "ghc9124";
       devShells."ghc9124" = mkProjectShell "ghc9124";
