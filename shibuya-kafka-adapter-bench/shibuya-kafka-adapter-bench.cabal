@@ -101,6 +101,7 @@ executable lifecycle-live
     base ^>=4.21.0.0,
     bytestring ^>=0.12,
     effectful >=2.6 && <2.8,
+    effectful-core (>=2.6.1 && <2.7) || (>=2.7.1.1 && <2.8),
     hw-kafka-client >=5.3 && <6,
     kafka-effectful ^>=0.3.1.0,
     process,

@@ -25,6 +25,10 @@
   repeated-shutdown, buffered-retry, restart, and actual-reassignment coverage.
 - Keep the documented absence of a DLQ producer: `AckDeadLetter` still warns
   and stores the offset deliberately.
+- Exclude `effectful-core` 2.7.0.0 through 2.7.1.0 from the library, tests,
+  benchmark, and examples because upstream records a per-operation performance
+  regression for dynamically dispatched effects. The 2.6 family and 2.7.1.1 or
+  later remain accepted.
 
 ## 0.9.0.1 — 2026-09-15
 

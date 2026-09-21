@@ -39,7 +39,7 @@ common common-deps
   build-depends:
     base ^>=4.21.0.0,
     bytestring,
-    effectful-core,
+    effectful-core (>=2.6.1 && <2.7) || (>=2.7.1.1 && <2.8),
     hs-opentelemetry-api ^>=1.0,
     hs-opentelemetry-exporter-otlp ^>=1.0,
     hs-opentelemetry-instrumentation-hw-kafka-client ^>=1.0,
