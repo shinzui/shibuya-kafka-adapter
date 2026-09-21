@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0.2 — 2026-09-21
 
 ### Bug Fixes
 
@@ -21,6 +21,9 @@
 
 ### Other Changes
 
+- Require `shibuya-core ^>=0.10.0.0` across the library, tests, benchmark,
+  and example so the adapter is certified against the lifecycle-remediation
+  release candidate. Keep all three repository packages on version `0.9.0.2`.
 - Add deterministic reference-model, cancellation, timeout, terminal-failure,
   repeated-shutdown, buffered-retry, restart, and actual-reassignment coverage.
 - Keep the documented absence of a DLQ producer: `AckDeadLetter` still warns
