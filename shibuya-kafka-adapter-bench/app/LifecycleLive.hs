@@ -43,7 +43,7 @@ import Shibuya.Core.Types (Envelope (..))
 import Shibuya.Telemetry.Effect (runTracingNoop)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
-import System.IO (Handle, IOMode (..), hFlush, hPutStrLn, withFile)
+import System.IO (Handle, IOMode (..), SeekMode (AbsoluteSeek), hFlush, hPutStrLn, hSeek, hSetFileSize, withFile)
 import System.Mem (performMajorGC)
 import System.Process (callProcess, readProcess)
 import Text.Read (readMaybe)
@@ -72,9 +72,10 @@ data Sample = Sample
   }
 
 data DeliveryLedger = DeliveryLedger
-  { producedIds :: !(IORef (Set Int)),
-    processedIds :: !(IORef (Set Int)),
-    duplicateIds :: !(IORef (Set Int)),
+  { producedHandle :: !Handle,
+    processedHandle :: !Handle,
+    producedPath :: !FilePath,
+    processedPath :: !FilePath,
     malformedDeliveries :: !(IORef Int)
   }
 
@@ -146,43 +147,43 @@ runFixture config topic group = do
   producedVar <- newTVarIO (0 :: Int)
   processedRef <- newIORef (0 :: Int)
   failedRef <- newIORef (0 :: Int)
-  ledger <- newDeliveryLedger
   stopVar <- newTVarIO False
   startTime <- getCurrentTime
 
-  withFile config.outputCsv WriteMode $ \handle -> do
-    hPutStrLn handle csvHeader
-    producerThread <- async $ runProducer config topic producedVar ledger stopVar
-    samplerThread <- async $ runSampler config topic group startTime producedVar processedRef failedRef handle
+  withDeliveryLedger config $ \ledger ->
+    withFile config.outputCsv WriteMode $ \handle -> do
+      hPutStrLn handle csvHeader
+      producerThread <- async $ runProducer config topic producedVar ledger stopVar
+      samplerThread <- async $ runSampler config topic group startTime producedVar processedRef failedRef handle
 
-    runConsumerSegment config topic group processedRef failedRef ledger $ do
-      threadDelay (config.restartAtSecs * 1_000_000)
-      putStrLn "Graceful midpoint stop"
+      runConsumerSegment config topic group processedRef failedRef ledger $ do
+        threadDelay (config.restartAtSecs * 1_000_000)
+        putStrLn "Graceful midpoint stop"
 
-    putStrLn "Restarting with the same consumer group"
-    runConsumerSegment config topic group processedRef failedRef ledger $ do
-      threadDelay ((config.durationSecs - config.restartAtSecs) * 1_000_000)
-      atomically $ writeTVar stopVar True
-      wait producerThread
-      waitForDrain producedVar processedRef 60
-      waitForBrokerDrain group 20
+      putStrLn "Restarting with the same consumer group"
+      runConsumerSegment config topic group processedRef failedRef ledger $ do
+        threadDelay ((config.durationSecs - config.restartAtSecs) * 1_000_000)
+        atomically $ writeTVar stopVar True
+        wait producerThread
+        waitForDrain producedVar processedRef 60
+        waitForBrokerDrain group 20
 
-    cancel samplerThread
-    finalSample <- sampleMetrics topic group startTime producedVar processedRef failedRef
-    hPutStrLn handle $ sampleToCsv finalSample
-    hFlush handle
+      cancel samplerThread
+      finalSample <- sampleMetrics topic group startTime producedVar processedRef failedRef
+      hPutStrLn handle $ sampleToCsv finalSample
+      hFlush handle
 
-    ledgerPassed <- writeDeliveryLedger config ledger
+      ledgerPassed <- writeDeliveryLedger config ledger
 
-    let passed =
-          finalSample.messagesFailed == 0
-            && finalSample.messagesProcessed == finalSample.messagesProduced
-            && finalSample.queueDepth == 0
-            && ledgerPassed
-    putStrLn $ "Produced: " <> show finalSample.messagesProduced
-    putStrLn $ "Processed: " <> show finalSample.messagesProcessed
-    putStrLn $ "Broker lag: " <> show finalSample.queueDepth
-    unless passed exitFailure
+      let passed =
+            finalSample.messagesFailed == 0
+              && finalSample.messagesProcessed == finalSample.messagesProduced
+              && finalSample.queueDepth == 0
+              && ledgerPassed
+      putStrLn $ "Produced: " <> show finalSample.messagesProduced
+      putStrLn $ "Processed: " <> show finalSample.messagesProcessed
+      putStrLn $ "Broker lag: " <> show finalSample.queueDepth
+      unless passed exitFailure
 
 runProducer :: Config -> TopicName -> TVar Int -> DeliveryLedger -> TVar Bool -> IO ()
 runProducer config topic producedVar ledger stopVar = do
@@ -255,32 +256,31 @@ runConsumerSegment config topic group processedRef failedRef ledger action = do
             recordProcessed ledger value
           pure AckOk
 
-newDeliveryLedger :: IO DeliveryLedger
-newDeliveryLedger =
-  DeliveryLedger
-    <$> newIORef Set.empty
-    <*> newIORef Set.empty
-    <*> newIORef Set.empty
-    <*> newIORef 0
+withDeliveryLedger :: Config -> (DeliveryLedger -> IO a) -> IO a
+withDeliveryLedger config action =
+  let producedPath = config.outputLedger <> ".produced.ids"
+      processedPath = config.outputLedger <> ".processed.ids"
+   in withFile producedPath ReadWriteMode $ \producedHandle ->
+        withFile processedPath ReadWriteMode $ \processedHandle -> do
+          hSetFileSize producedHandle 0
+          hSetFileSize processedHandle 0
+          malformedDeliveries <- newIORef 0
+          action DeliveryLedger {producedHandle, processedHandle, producedPath, processedPath, malformedDeliveries}
 
 recordProduced :: DeliveryLedger -> Int -> IO ()
-recordProduced ledger value =
-  atomicModifyIORef' ledger.producedIds $ \values -> (Set.insert value values, ())
+recordProduced ledger value = hPutStrLn ledger.producedHandle (show value)
 
 recordProcessed :: DeliveryLedger -> Int -> IO ()
-recordProcessed ledger value = do
-  duplicate <- atomicModifyIORef' ledger.processedIds $ \values ->
-    (Set.insert value values, Set.member value values)
-  when duplicate $
-    atomicModifyIORef' ledger.duplicateIds $
-      \values -> (Set.insert value values, ())
+recordProcessed ledger value = hPutStrLn ledger.processedHandle (show value)
 
 writeDeliveryLedger :: Config -> DeliveryLedger -> IO Bool
 writeDeliveryLedger config ledger = do
-  produced <- readIORef ledger.producedIds
-  processed <- readIORef ledger.processedIds
-  duplicates <- readIORef ledger.duplicateIds
+  producedValues <- readIdentityHandle ledger.producedPath ledger.producedHandle
+  processedValues <- readIdentityHandle ledger.processedPath ledger.processedHandle
   malformed <- readIORef ledger.malformedDeliveries
+  let produced = Set.fromList producedValues
+      processed = Set.fromList processedValues
+      duplicates = duplicateValues processedValues
   let missing = produced `Set.difference` processed
       unexpected = processed `Set.difference` produced
       passed = Set.null missing && Set.null unexpected && Set.null duplicates && malformed == 0
@@ -300,6 +300,23 @@ writeDeliveryLedger config ledger = do
   LBS.writeFile config.outputLedger (encode artifact)
   putStrLn $ "Delivery ledger: " <> config.outputLedger <> " (" <> if passed then "pass)" else "fail)"
   pure passed
+
+readIdentityHandle :: FilePath -> Handle -> IO [Int]
+readIdentityHandle path handle = do
+  hFlush handle
+  hSeek handle AbsoluteSeek 0
+  contents <- BS8.hGetContents handle
+  traverse parseIdentity (filter (not . BS8.null) (BS8.lines contents))
+  where
+    parseIdentity raw =
+      maybe (ioError $ userError $ "Invalid delivery identity in " <> path) pure (readMaybe $ BS8.unpack raw)
+
+duplicateValues :: [Int] -> Set Int
+duplicateValues = snd . foldl' step (Set.empty, Set.empty)
+  where
+    step (seen, duplicates) value
+      | Set.member value seen = (seen, Set.insert value duplicates)
+      | otherwise = (Set.insert value seen, duplicates)
 
 runSampler :: Config -> TopicName -> ConsumerGroupId -> UTCTime -> TVar Int -> IORef Int -> IORef Int -> Handle -> IO ()
 runSampler config topic group startTime producedVar processedRef failedRef handle = forever $ do

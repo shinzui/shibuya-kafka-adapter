@@ -26,8 +26,10 @@
   release candidate. Keep all three repository packages on version `0.9.1.0`.
 - Add deterministic reference-model, cancellation, timeout, terminal-failure,
   repeated-shutdown, buffered-retry, restart, and actual-reassignment coverage.
-- Make the live restart fixture emit a per-delivery identity ledger and fail on
-  duplicates, missing deliveries, unexpected deliveries, or malformed payloads.
+- Make the live restart fixture stream delivery identities to external files,
+  emit a reconciled per-delivery ledger, and fail on duplicates, missing
+  deliveries, unexpected deliveries, or malformed payloads without retaining
+  the identity set in the measured process heap.
 - Keep the documented absence of a DLQ producer: `AckDeadLetter` still warns
   and stores the offset deliberately.
 - Exclude `effectful-core` 2.7.0.0 through 2.7.1.0 from the library, tests,
