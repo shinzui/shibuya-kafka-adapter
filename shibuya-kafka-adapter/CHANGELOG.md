@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0.2 — 2026-09-21
+## 0.9.1.0 — 2026-09-21
 
 ### Bug Fixes
 
@@ -23,9 +23,11 @@
 
 - Require `shibuya-core ^>=0.10.0.0` across the library, tests, benchmark,
   and example so the adapter is certified against the lifecycle-remediation
-  release candidate. Keep all three repository packages on version `0.9.0.2`.
+  release candidate. Keep all three repository packages on version `0.9.1.0`.
 - Add deterministic reference-model, cancellation, timeout, terminal-failure,
   repeated-shutdown, buffered-retry, restart, and actual-reassignment coverage.
+- Make the live restart fixture emit a per-delivery identity ledger and fail on
+  duplicates, missing deliveries, unexpected deliveries, or malformed payloads.
 - Keep the documented absence of a DLQ producer: `AckDeadLetter` still warns
   and stores the offset deliberately.
 - Exclude `effectful-core` 2.7.0.0 through 2.7.1.0 from the library, tests,

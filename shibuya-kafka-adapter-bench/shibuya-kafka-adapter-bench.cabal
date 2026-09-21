@@ -1,6 +1,6 @@
 cabal-version: 3.12
 name: shibuya-kafka-adapter-bench
-version: 0.9.0.2
+version: 0.9.1.0
 synopsis: Benchmarks for shibuya-kafka-adapter conversion functions
 description:
   Micro-benchmarks for the pure conversion hot path in shibuya-kafka-adapter:
@@ -100,6 +100,7 @@ executable lifecycle-live
     async ^>=2.2,
     base ^>=4.21.0.0,
     bytestring ^>=0.12,
+    containers ^>=0.7,
     effectful >=2.6 && <2.8,
     effectful-core (>=2.6.1 && <2.7) || (>=2.7.1.1 && <2.8),
     hw-kafka-client >=5.3 && <6,
