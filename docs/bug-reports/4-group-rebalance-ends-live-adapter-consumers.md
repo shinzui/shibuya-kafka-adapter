@@ -26,6 +26,7 @@ reproduction:
   - Run `cabal run kenshou -- run kafka/adapter/concurrency/group-rebalance-with-inflight --out runs --set kafka.messages=3000 --set kafka.membership-interval-seconds=1 --set kafka.service-ms=5` from mori://shinzui/keiro-runtime-kenshou. The scenario starts three adapter workers, adds a fourth, stops one gracefully, kills another, and restarts it.
   - Inspect run `01a0d639-dce0-7333-9256-3ee15d0e29c0` and its worker control logs. Three surviving workers end normally before stop, 1,523 acknowledged IDs have no handler fact, and eleven of twelve partitions retain lag after the recovery deadline.
   - Repeat with `--set kafka.messages=4000 --set kafka.membership-interval-seconds=3 --set kafka.service-ms=10`. Run `01a0d63c-dfb0-762c-a9e6-c3f23156afc5` records two early exits while eventually handling all IDs and reaching zero lag.
+  - Run `cabal run kenshou -- run kafka/adapter/concurrency/partitioned-consumer-becomes-zombie --out runs --set kafka.messages=2000` from mori://shinzui/keiro-runtime-kenshou. Run `01a0d64b-ca41-7466-8518-d3f227601385` blackholes A's private broker-proxy lane for twelve seconds while B stays connected. B takes over A's two partitions and all 2,000 acknowledged IDs receive handler facts, but both workers end before stop and the group retains lag 388 on each former A partition.
 workaround: Restarting a consumer process can help the group drain, but the first run still failed after one killed member was restarted; no reliable workaround is established.
 reviews:
   - kind: model
@@ -56,3 +57,10 @@ for run directories is pending. The first run also found offset-order
 reversals and incomplete processing; the second found duplicate deliveries
 beyond the declared membership windows. Those separate safety observations
 need isolation and are not assumed to share this exit cause.
+
+The two-lane network-partition reproduction shows the same unexpected normal
+exit after B takes over A's assignments. Its group offsets remain behind even
+though all acknowledged IDs have handler facts. The scenario also records
+312 duplicates against an estimated buffer bound of 241; the harness cannot
+yet observe exact adapter buffer occupancy, so that estimate is not asserted
+as a separate adapter defect.
