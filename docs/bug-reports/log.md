@@ -2,6 +2,7 @@
 
 ## 2026-09-25
 
+* **Addition**: BUG-3 records two live adapter workers exiting after a broker restart with acknowledged records still unhandled.
 * **Addition**: BUG-2 records successor handler effects running before a retried predecessor under serial processing.
 
 ## 2026-09-24
