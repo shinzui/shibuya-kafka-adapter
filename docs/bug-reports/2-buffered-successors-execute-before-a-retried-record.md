@@ -18,6 +18,7 @@ reproduction:
   - Build the released Kenshou cohort containing the Hackage shibuya-kafka-adapter 0.9.0.1 tarball (SHA-256 1918bae0c591ab47ba45d044a50170e7a340bddb1b562752cd16f556e86314e6).
   - Run `cabal run kenshou -- run kafka/adapter/concurrency/buffered-successors-run-before-retry --out runs` from mori://shinzui/keiro-runtime-kenshou with a private Redpanda 26.2.1 broker, one partition, the adapter's default batch size 100 and Shibuya inbox size 100, both telemetry dimensions off, and the default run seed.
   - Inspect run `01a0d5ec-3cf3-7625-a9f8-1ec2c2d9c916` with seed 1402572546415582. It records deliveries `[0,1,2,3,4,5,6,7,8,9,3]` and successful handler results `[0,1,2,4,5,6,7,8,9,3]`.
+  - Repeat with `--set kafka.batch-size=1`; run `01a0d5ee-9490-70b0-adb7-eaafedff1583` passes the ordering check.
 workaround: Keep handlers idempotent and use a batch size of one if strict retry order is required; the latter reduces poll throughput.
 reviews:
   - kind: model
