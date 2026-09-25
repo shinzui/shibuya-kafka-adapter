@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-09-25
+
+* **Addition**: BUG-2 records successor handler effects running before a retried predecessor under serial processing.
+
 ## 2026-09-24
 
 * **Addition**: BUG-1 records a buffered retry that leaves acknowledged successors uncommitted on the released adapter.
