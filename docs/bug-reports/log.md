@@ -2,6 +2,7 @@
 
 ## 2026-09-25
 
+* **Addition**: BUG-5 records a live broker and model reproduction of a later retry replacing the earlier seek barrier.
 * **Addition**: BUG-4 records surviving adapter consumers ending normally during group membership changes.
 * **Addition**: BUG-3 records two live adapter workers exiting after a broker restart with acknowledged records still unhandled.
 * **Addition**: BUG-2 records successor handler effects running before a retried predecessor under serial processing.
