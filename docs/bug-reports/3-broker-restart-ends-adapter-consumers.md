@@ -27,6 +27,7 @@ reproduction:
   - Inspect run `01a0d624-2294-77c0-927d-a952855ed178` (seed 8745063177570223) and run `01a0d62b-dd17-7101-819f-472923759969` (seed 657561724505188). Both record 1,000 successful delivery callbacks, no delivery failures, two unexpected worker exits, and nonzero final lag. The later run's replacement-worker control reaches zero lag and handles all 1,000 IDs across original and replacement workers.
   - The default run `01a0d626-ef89-76cc-9e84-4dcedba62a6d` (seed 4718453199430480) reproduces the two exits after a 20-second outage with 15,000 successful delivery callbacks and 401 original handler facts.
   - The reduced proxy-blackhole control `01a0d626-2a64-713a-b162-03cc64417be8` (seed 3516467579919409) keeps both workers alive and handles all 1,000 acknowledged IDs after the connection is restored.
+  - The first runs did not install the caller-provided `kafkaRebalanceHandler`. Reduced kill run `01a0d634-0897-71b4-8cfa-51b3c86e0bdb` (seed 5506603432029298) installed it and logged assignment and revoke callbacks. Both workers still exited before stop, with 1,000 successful delivery callbacks and only 380 original handler facts. Thus the missing callback does not explain the observed exit.
 workaround: Restarting adapter consumer processes after broker recovery drained the backlog in one reduced control run; another reduced control reached zero lag while nine acknowledged IDs still lacked handler facts, so a process restart alone has not been shown to preserve the no-loss contract.
 reviews:
   - kind: model
@@ -60,3 +61,10 @@ The passing proxy-blackhole control narrows the trigger to the broker restart
 path in this cohort. A separate restart control recovered all IDs in one run;
 another recovered the lag but lacked nine handler facts, so no general
 recovery workaround is asserted.
+
+The first reproduction workers did not install the optional rebalance
+callback. A follow-up run with `kafkaRebalanceHandler` installed showed
+assignment and revoke events in the worker logs and reproduced both unexpected
+normal exits. The owner's intended callback therefore does not eliminate
+this failure in the tested released cohort. Its replacement-worker control
+also reached zero lag with some acknowledged IDs lacking handler facts.
