@@ -3,10 +3,10 @@ type: Bug Report
 title: Buffered retry leaves acknowledged successors uncommitted
 description: A serial consumer stays live with lag after all records return AckOk following a buffered AckRetry.
 generated:
-  by: process:codex
-  at: "2026-09-24T23:58:16Z"
+  by: claude-code/claude-fable-5-1
+  at: "2026-09-30T20:37:02Z"
 bugId: BUG-1
-status: reported
+status: confirmed
 severity: degraded
 origin: mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime
 affects: mori://shinzui/shibuya-kafka-adapter
@@ -51,3 +51,19 @@ described in
 That plan also addresses a distinct loss hazard when a buffered successor
 itself retries. This report records the broker-observed failure in released
 0.9.0.1; it does not claim the plan's proposed fix has been verified.
+
+## Confirmation
+
+The owning repository reproduced this on 2026-09-30, on Hackage 0.9.0.1 and on
+0.9.1.0 (the current source, which has no code change since the `v0.9.1.0` tag),
+against the shared Redpanda broker: fifty records on one partition, one `AckRetry`
+at offset 20, driven through `kafkaAdapter` and a serial `runApp` processor. All
+three runs on each version handled every record and left the group committed at
+offset 21 of 50, both while live and after graceful shutdown. A broker-free
+reproduction over an in-memory log gives the same result deterministically:
+twelve records with one retry at offset 4 store only offsets 0 through 4.
+
+The cause on 0.9.1.0 is that the source filter discards the redelivered
+successors while the retry barrier is still pending, and nothing fetches them
+again once it clears. The fix is planned in
+`docs/plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md`.

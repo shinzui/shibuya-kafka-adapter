@@ -3,10 +3,10 @@ type: Bug Report
 title: Buffered successors execute before a retried record
 description: A serial adapter processes buffered successor handlers before it redelivers an earlier failed offset.
 generated:
-  by: process:codex
-  at: "2026-09-25T00:17:32Z"
+  by: claude-code/claude-fable-5-1
+  at: "2026-09-30T20:37:02Z"
 bugId: BUG-2
-status: reported
+status: confirmed
 severity: degraded
 origin: mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime
 affects: mori://shinzui/shibuya-kafka-adapter
@@ -48,3 +48,19 @@ The buffer placement and proposed fix are analyzed in
 `mori://shinzui/keiro/plans/119-fix-the-seek-barrier-ordering-and-stale-successor-execution-in-shibuya-kafka-adapter`.
 BUG-1 records the separate observed commit-lag behavior after buffered
 successors have executed. This report isolates handler effect order.
+
+## Confirmation
+
+The owning repository reproduced this on 2026-09-30, on Hackage 0.9.0.1 and on
+0.9.1.0 (the current source), against the shared Redpanda broker: fifty records on
+one partition with one `AckRetry` at offset 20, through `kafkaAdapter` and a
+serial `runApp` processor, ran handlers in the order `0..49, 20` in three runs out
+of three on each version. A broker-free reproduction over an in-memory log shows
+the same order deterministically: `0..11, 4` for twelve records with one retry at
+offset 4.
+
+The successors are already in the runner's inbox when the retry is decided, and
+the adapter has no way to recall them. The fix is planned in
+`docs/plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md`,
+which adds a delivery-status check to `shibuya-core` that the runner asks before
+each handler, and builds on plan 16.

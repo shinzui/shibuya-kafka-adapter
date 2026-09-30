@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-09-30
+* **Update**: BUG-1 and BUG-2 are confirmed: the owning repository reproduced both on 0.9.0.1 and 0.9.1.0, and their fixes are planned in plans 16 and 17.
 * **Update**: BUG-7 links the follow-on improvement request IR-1 and the upstream-issues entry for the missing hw-kafka-client binding.
 * **Addition**: BUG-7 records that a caught-up consumer finalizes about three records per second because each offset store waits behind an idle poll holding the consumer lock.
 * **Update**: BUG-5 is fixed in 0.9.1.0: the report's live-broker schedule loses offset 3 on 0.9.0.1 and loses nothing on 0.9.1.0.
