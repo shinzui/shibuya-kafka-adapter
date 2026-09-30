@@ -245,5 +245,23 @@ in  Schema.Project::{ project =
         , description = Some
             "Reproducible defects in shipped Kafka adapter behavior"
         }
+      , Schema.OkfBundle::{ name = "improvement-requests"
+        , path = "docs/improvement-requests"
+        , profile = Some "docs/improvement-requests/profile.dhall"
+        , profileBinding = Some
+            ( Schema.ProfileBinding.Published
+                Schema.PinnedImport::{
+                , publisher = "shinzui/okf-profiles"
+                , publisherRef = Some Schema.MoriRef::{ namespace = "shinzui", name = "okf-profiles" }
+                , export = Some "coordination.improvementRequests"
+                , version = Some "v0.18.0"
+                , pin = Some
+                    "sha256:7d3a4a22be12fd0e697d6012ed1eb2efe4cb5dc4700d08fd49aa5e4c0e523df8"
+                }
+            )
+        , okfVersion = "0.2"
+        , description = Some
+            "Requested changes to shibuya-kafka-adapter that depend on other projects, with stable IR-N handles"
+        }
       ]
     }
