@@ -10,3 +10,4 @@ okf_version: "0.2"
 - [Group rebalances end live adapter consumers](4-group-rebalance-ends-live-adapter-consumers.md) - Surviving adapter workers end normally during membership changes, sometimes leaving acknowledged records unhandled.
 - [Later retry overwrites an earlier seek barrier](5-later-retry-overwrites-earlier-seek-barrier.md) - Two buffered retries can commit past a record that never succeeded.
 - [Group rebalance replays committed offsets out of order](6-rebalance-replays-committed-offsets-out-of-order.md) - A serial consumer handles an already committed lower offset after a higher offset within one assignment.
+- [Caught-up consumer finalizes about three records per second](7-caught-up-consumer-finalizes-about-three-records-per-second.md) - Every offset store waits behind an idle poll that holds the consumer lock for about 0.3 seconds.
