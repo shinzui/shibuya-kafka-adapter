@@ -5,6 +5,13 @@ title: "Migrate to shibuya-core 0.5.0.0 and remove Shibuya.Adapter.Kafka.Tracing
 kind: exec-plan
 created_at: 2026-05-05T23:34:04Z
 intention: "intention_01kh0akd82ekat0be54p2f72kv"
+provenance:
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-12T23:33:00Z
+      mode: "update"
+      note: "Repoint the audit citation to the consolidated canonical Shibuya plan 9."
 ---
 
 
@@ -34,7 +41,7 @@ changes:
     Consumer-kind span (left-biased; adapter values override
     framework defaults of the same name). This is the framework-side
     fix for Finding F1 of the OpenTelemetry API audit
-    (`shinzui/shibuya/docs/plans/9-otel-audit-findings.md`), the
+    (`mori://shinzui/shibuya/plans/9-audit-and-improve-opentelemetry-api`), the
     "duplicate Consumer span" hazard that this very repo's
     `Shibuya.Adapter.Kafka.Tracing.traced` wrapper triggered when
     used in combination with `runApp`.
@@ -749,3 +756,6 @@ Revision history:
 -   2026-05-05: Initial draft. Tracks plan 9
     (`shinzui/shibuya/docs/plans/9-audit-and-improve-opentelemetry-api.md`)
     M2.3. Intention shared with the parent plan.
+
+-   2026-10-12: Repointed the audit finding citation to the consolidated canonical
+    parent plan; the duplicate findings document was merged into that plan.
