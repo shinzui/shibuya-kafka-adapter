@@ -1,4 +1,3 @@
-.envrc
 .pre-commit-config.yaml
 .claude/
 .mina/
