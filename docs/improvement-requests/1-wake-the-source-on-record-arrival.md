@@ -1,30 +1,32 @@
 ---
 type: Improvement Request
 title: Wake the source on record arrival instead of polling on a timer
-description: Once hw-kafka-client exposes librdkafka's queue event notification, the adapter should wait on that notification while its queue is empty instead of checking the queue every 10 ms, removing the idle wake-ups and the added latency that the timer costs.
+description: After the adapter migrates to rdkafka-hs, wait on queue notifications outside the consumer lock to avoid idle timer polls while preserving prompt shutdown, fatal-error detection, and delivery safety.
+timestamp: 2026-10-26T23:05:51Z
 generated:
   by: claude-code/claude-fable-5-1
   at: "2026-09-30T17:52:37Z"
 requestId: IR-1
 status: proposed
+targetPlan: docs/plans/19-wake-the-source-on-record-arrival-after-the-rdkafka-hs-migration.md
 origin: mori://shinzui/shibuya-kafka-adapter/okf/bug-reports/concepts/BUG-7
-dependencies:
-  - ref: mori://shinzui/hw-kafka-client/okf/improvement-requests/concepts/IR-1
-    kind: hard
-    reason: The adapter cannot wait for records without a binding for rd_kafka_queue_io_event_enable applied to the queue the consumer reads from; the queue is internal to hw-kafka-client.
+dependencies: []
 acceptanceCriteria:
   - id: AC-1
-    statement: While the consumer has nothing to read, the source makes no polls at all; it wakes only when librdkafka signals that the queue became non-empty, or when a bounded safety timeout elapses.
-    verification: The scripted-log test "idle source never waits inside the client" changes its bound so that an idle second sees at most the safety-timeout wake-ups, and passes.
+    statement: On the supported notification path, an empty source waits outside the consumer lock and polls again only for queue readiness or a bounded safety deadline; shutdown and local fatal-state changes interrupt the wait promptly.
+    verification: The plan's Source wake tests count initial and safety-deadline polls, prove that idle timer polling is absent, and exercise shutdown and fatal-state wakeups.
   - id: AC-2
     statement: An idle consumer under the Shibuya runner uses no more process CPU than the blocking poll did before plan 18, about 0.2% of one core.
-    verification: The idle CPU measurement in plan 18 is repeated with the example consumer and recorded.
+    verification: Three 60-second idle runner measurements record consumer process CPU against the migrated baseline and the historical approximately 0.2% target.
   - id: AC-3
-    statement: A record produced to an idle consumer reaches the handler without the up-to-10 ms timer wait that plan 18 introduced.
-    verification: The 2 records per second latency measurement from BUG-7 is repeated and its mean is recorded below plan 18's 17 ms.
+    statement: A record produced to an idle consumer reaches the handler without the idle timer delay proposed by plan 18.
+    verification: Deterministic arrival-race tests pass, and three 30-second runs at two records per second record mean latency below plan 18's historical prototype result of 17 ms.
   - id: AC-4
-    statement: Every consumer call still runs under the consumer lock, and the source still never waits inside the client while holding it.
-    verification: The tests from plan 18 pass unchanged except for the idle bound in AC-1.
+    statement: Existing consumer-operation serialization and delivery fencing remain; the notification path uses zero-timeout drains under the lock and waits for arrival outside it. This does not bound synchronous callbacks, seeks, or commits, or change the runtime support accepted by migration.
+    verification: The migrated drain, retry, seek-serial, assignment, delivery-status, and finalization tests retain their assertions; a finalizer completes while the source is parked.
+  - id: AC-5
+    statement: Notification resources are released safely on shutdown, cancellation, early stream termination, and partial acquisition, without writes to closed descriptors or leaked waiters.
+    verification: Deterministic lifecycle tests and live notification tests establish deregistration-before-close ordering and cleanup before consumer teardown.
 reviews:
   - kind: model
     reviewer: claude-code/claude-fable-5-1
@@ -46,46 +48,65 @@ reviews:
 found that the source held the consumer lock while it waited inside the Kafka client
 for records. The fix,
 `docs/plans/18-drain-the-consumer-queue-without-blocking-under-the-consumer-lock.md`,
-keeps the lock and stops waiting inside the client: the source takes whatever is
-already queued and, when the queue is empty, sleeps 10 ms outside the lock before
-looking again. That sleep is the price of having nothing to wait on. It costs about
-100 wake-ups a second and 0.9% of one core per idle consumer against 0.19% before,
-and adds up to 10 ms to the time a record waits on an idle consumer.
+proposes keeping the lock and stopping waits for record arrival inside the client:
+the source takes whatever is already queued and, when the queue is empty, sleeps
+10 ms outside the lock before looking again. Its prototype measured about 100
+wake-ups a second and 0.9% of one core per idle consumer against 0.19% before, and
+introduced an idle timer delay. As of 2026-10-26 plan 18 remains unimplemented;
+these are historical prototype results, not measurements of this checkout.
 
 librdkafka can remove that price: `rd_kafka_queue_io_event_enable` writes to a file
-descriptor whenever a queue goes from empty to non-empty. `hw-kafka-client` 5.3.0
-does not bind it, and the queue the consumer reads from is internal to that library,
-so the adapter cannot enable it alone.
+descriptor when its queue needs serving. The original request depended on adding
+that binding to `hw-kafka-client`. The replacement `mori://shinzui/rdkafka-hs`
+already exposes `Kafka.Consumer.setConsumerQueueIOEvent` in the inspected source.
+Its API and ownership contract must be rechecked against the release actually
+adopted by the separately planned migration.
 
 ## What has to happen first
 
-1. The fork `mori://shinzui/hw-kafka-client` binds the function and applies it to the
-   consumer's queue. That is
-   `mori://shinzui/hw-kafka-client/okf/improvement-requests/concepts/IR-1`, the hard
-   dependency above. It is not filed upstream; `haskell-works/hw-kafka-client` last
-   pushed in October 2025 and has not answered its issue #213.
-2. `mori://shinzui/kafka-effectful` exposes it as an operation of its `KafkaConsumer`
-   effect, which is what this adapter programs against. No request exists there yet;
-   file one once the binding's shape is settled.
+**Implementation is blocked on this repository's migration to
+`mori://shinzui/rdkafka-hs`, as directed by the owner on 2026-10-26.** The migration
+is separate work; this request and its target plan do not perform it. No local
+migration plan was found when this request was updated. Link that artifact when
+it exists and record its accepted build and behavior evidence before unblocking.
+The profile's structured `dependencies` field accepts only improvement-request
+URIs, so it is empty until the migration has such a request to reference. The
+hard migration gate is recorded here and in the target plan; an empty structured
+list does not mean this work is unblocked.
+
+The migrated effect boundary (currently `mori://shinzui/kafka-effectful`) and all
+its interpreters must expose notification registration and deregistration with
+safe lifetime ownership. The nonblocking drain foundation from plan 18, or an
+equivalent validated migrated implementation, must exist first. The target plan
+requires rechecking callback modes, runtime support, and teardown against the
+selected release. Upstream API availability alone is not migration completion.
+
+The replacement implementation is recorded at
+`mori://shinzui/rdkafka-hs/plans/4-expose-queue-event-notification-for-consumers`;
+its ownership contract is
+`mori://shinzui/rdkafka-hs/okf/adrs/concepts/ADR-1`.
 
 The catalog entry `hw-kafka-client-no-queue-event-binding` in
-`mori/upstream-issues.dhall` names the same gap from the dependency side and says
-when to revisit it.
+`mori/upstream-issues.dhall` records the historical gap from the dependency side.
+Reconcile it when migration and feature acceptance actually resolve that gap.
 
 ## What changes here when both exist
 
-In `Shibuya.Adapter.Kafka.Internal`, the source keeps draining the queue under the
-consumer lock exactly as plan 18 leaves it. When a drain returns nothing, instead of
-`threadDelay`, the source waits on the read end of a non-blocking pipe registered
-with the new operation, using `threadWaitRead` under a bounded timeout as a safety
-net, then reads and discards whatever librdkafka wrote to the pipe and drains again.
-The pipe is created when the adapter is built and registered once; a record that
-arrives between the empty drain and the wait is not lost, because librdkafka writes
-to the pipe on the empty-to-non-empty transition, which has then already happened and
-left the pipe readable.
+The source retains the migrated zero-timeout drain and consumer lock. It clears
+pending notification bytes before draining, then waits outside the lock only
+after proving the queue empty. A full batch must continue draining without
+waiting. An arrival after the last empty poll leaves the descriptor readable;
+do not clear that fresh notification before waiting.
 
-The non-threaded runtime keeps the batch poll path from plan 18, since it has no
-background loop to serve group events and this change does not add one.
+Registration and deregistration need exception-safe ownership within the live
+consumer scope. Disable notifications before closing descriptors and coordinate
+cleanup with source cancellation and consumer teardown. Waits must be interrupted
+by shutdown and local fatal state and bounded to detect native fatal errors that
+do not notify the watched queue. Preserve the runtime support accepted by the
+migration; the old non-threaded batch workaround is not an assumed requirement
+for the replacement client.
 
-When the work is planned, write the ExecPlan in `docs/plans/` and record its path in
-this request's `targetPlan`.
+The target ExecPlan is
+[Plan 19](../plans/19-wake-the-source-on-record-arrival-after-the-rdkafka-hs-migration.md).
+It records the blocking gate, three implementation milestones, race/lifecycle
+tests, and fresh CPU/latency acceptance. No implementation has started.
