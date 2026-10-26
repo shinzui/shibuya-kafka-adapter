@@ -10,9 +10,22 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-30T14:44:59Z
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T03:49:44Z
+      mode: "update"
+      note: "Ground review in 0.10.0.0; strengthen wake-up and commit acceptance, correct benchmark dependencies and stale build guidance."
+  reviews:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T03:55:12Z
+      verdict: "approved"
+      note: "Revised plan is implementable after correcting test oracles, wake publication, and benchmark/build guidance; 40 broker-free tests, all-component build, and OKF validation passed; broker timeout prevents live validation."
 ---
 
 # Hold replayed successors so a buffered retry cannot stall partition commits
+
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
@@ -20,6 +33,7 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 
 ## Purpose / Big Picture
+
 
 An application that consumes Kafka through `shibuya-kafka-adapter` and the Shibuya
 runner can ask for a record to be delivered again by returning `AckRetry` from its
@@ -51,34 +65,28 @@ which builds on the mechanism introduced here.
 
 ## Progress
 
-- [ ] Milestone 1: add the broker-free scripted log helper
-  `shibuya-kafka-adapter/test/Kafka/ScriptedLog.hs` and register it in the test suite.
-- [ ] Milestone 1: write the two characterization tests (broker-free and live) and
-  record their failing output on the unchanged code in Surprises & Discoveries.
-- [ ] Milestone 1: add the `Source gate` benchmark over the current
-  `dropStaleRecords` and record its baseline numbers in this plan.
-- [ ] Milestone 2: add the seek bookkeeping and wake signal to
-  `Shibuya.Adapter.Kafka.Internal` (`Polled`, `seekSerial`, `retryRequests`,
-  `seeksCompleted`, `seekedAt`, `halted`, `replayed`, `ackSignal`).
-- [ ] Milestone 2: make `kafkaSource` stamp every polled record and replace
-  `dropStaleRecords` with `gateRecords`; rewire `kafkaAdapterWith`.
-- [ ] Milestone 2: add the deterministic gate tests in
-  `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs`.
-- [ ] Milestone 2: both characterization tests and the double-retry scripted test
-  pass, and the pre-existing 53 tests still pass.
-- [ ] Milestone 3: benchmark comparison against the Milestone 1 baseline recorded.
-- [ ] Milestone 3: example and benchmark packages build; ten consecutive runs of the
-  full suite pass.
-- [ ] Milestone 4: module documentation, both README files, the CAP-2 capability
-  record, and the changelog describe the new behaviour.
-- [ ] Milestone 4: ADR for the source gate written; BUG-1 marked fixed.
+
+- [ ] Milestone 1: characterize the lost-successor schedule with broker-free and
+  live tests, and capture a compiling source-gate benchmark baseline.
+- [ ] Milestone 2: implement seek-stamped admission and cancellation-safe wake-ups;
+  verify retry, gap, lifecycle, and batch-runner cases alongside the existing suite.
+- [ ] Milestone 3: keep the benchmark within ten percent of baseline, build every
+  package and benchmark component, and pass ten consecutive full-suite runs.
+- [ ] Milestone 4: publish consistent retry documentation, validated CAP-2 and BUG-1
+  records, changelog notes, and the source-gate ADR.
+
+Review handoff (2026-10-25): implementation has not begun. The checkout is version
+0.10.0.0 with shibuya-core 0.11 bounds; the retry filter remains as described below.
+The 40 broker-free tests pass and all packages including benchmarks build. Live
+validation remains outstanding because the broker metadata request timed out.
 
 
 ## Surprises & Discoveries
 
+
 - 2026-09-30 (planning): BUG-1 was filed against Hackage 0.9.0.1. It still reproduces
-  on 0.9.1.0 and on the current source, which has no code change since the `v0.9.1.0`
-  tag. Fifty records on one partition, one `AckRetry` at offset 20, driven through
+  on 0.9.1.0 and on the source at that time, which had no code change since the
+  `v0.9.1.0` tag. Fifty records on one partition, one `AckRetry` at offset 20, driven through
   `kafkaAdapter` and a serial `runApp` processor against the shared Redpanda broker,
   gave the same result in three runs out of three on both versions.
 
@@ -110,8 +118,32 @@ which builds on the mechanism introduced here.
   not here. It matters to this plan only because, until plan 18 is implemented, live
   tests must allow that much time per record.
 
+- 2026-10-25 (review): the benchmark component in
+  `shibuya-kafka-adapter-bench/shibuya-kafka-adapter-bench.cabal` does not declare
+  `effectful-core`, so the proposed `Effectful.runEff` import requires a direct
+  dependency there. `cabal build all --enable-benchmarks` succeeds without the old
+  `crypton` workaround. The current 40 broker-free tests pass (0.32s); the 13 live
+  tests were not validated because `rpk cluster info -X brokers=127.0.0.1:9092`
+  failed with `i/o timeout`. The full-suite attempt was stopped during its first
+  integration test. September prototype results above remain historical evidence,
+  not a verification of the revised plan's implementation.
+
+- 2026-10-25 (review): `pollPayloads env 3` only performs three short polls and
+  never verifies assignment. An empty result is insufficient proof of a committed
+  end position. The revised live test checks committed offset 12 directly, both
+  before shutdown and after consumer close, and establishes assignment before its
+  restart check. The proposed revocation test also only checked an already-revoked
+  partition; it now revokes while a successor is held.
+
+- 2026-10-25 (review): the local ADR resolves and the current capability and
+  bug-report bundles pass their profile validation commands. Mori resolves the
+  project references but currently reports the two cited cross-repository plan
+  artifact URIs as not found. Keep their canonical URIs; both plans exist
+  in their owning checkouts, and the summary here supplies the required context.
+
 
 ## Decision Log
+
 
 - Decision: fix the stall by holding replayed successors at the source until the
   retried record is resolved, instead of dropping them.
@@ -177,13 +209,30 @@ which builds on the mechanism introduced here.
   `Unreleased` section into the version it creates.
   Date: 2026-09-30
 
+- Decision: keep state mutation and its wake signal in one short asynchronous-
+  exception-masked IO action; keep STM waits and consumer operations interruptible.
+  Rationale: an exception between an IORef update and the TVar increment could
+  otherwise leave an already-held successor asleep after its release condition
+  became true. Signal ordering alone does not close that cancellation window.
+  Date: 2026-10-25
+
+- Decision: treat runner delivery traces as schedule-dependent, and use controlled
+  gate tests for the hold/drop ordering claim. Require direct broker offset evidence
+  for live completion and an actual batch-runner retry test for batch liveness.
+  Rationale: a five-millisecond sleep cannot guarantee a thread schedule; an empty
+  poll cannot prove assignment or commit progress; the batch timeout rationale must
+  be exercised through the runner.
+  Date: 2026-10-25
+
 
 ## Outcomes & Retrospective
+
 
 (To be filled during and after implementation.)
 
 
 ## Context and Orientation
+
 
 This repository publishes one Haskell library, `shibuya-kafka-adapter`, in the
 directory of the same name. Two sibling packages ride along and are not published:
@@ -195,8 +244,10 @@ repository, `mori://shinzui/shibuya`) knows how to run.
 
 ### Kafka terms used in this plan
 
+
 A Kafka topic is split into partitions. Each partition is an ordered log, and each
-record in it has an offset, a number that increases by one per record. A consumer
+record in it has an offset, a number that increases along the log. Visible offsets
+can have gaps after retention, compaction, or filtering. A consumer
 reads a partition by polling, which returns a batch of records starting at the
 consumer's current position. A consumer group remembers, per partition, a committed
 offset: the position a new consumer in that group starts from. This adapter runs the
@@ -207,10 +258,11 @@ for one partition, so the next poll returns records from the chosen offset again
 
 ### Shibuya terms used in this plan
 
+
 A handler is the application function that processes one message and returns an
 `AckDecision`: `AckOk` (done), `AckRetry` (deliver it again), `AckDeadLetter` (give up
-on it), or `AckHalt` (stop). The runner started by `Shibuya.App.runApp` uses two
-threads per processor. The ingester thread pulls records from the adapter's `source`
+on it), or `AckHalt` (stop). The runner started by `Shibuya.App.runApp` separates
+ingestion from processing. The ingester thread pulls records from the adapter's `source`
 stream and puts them in the inbox, a bounded queue of 100 entries by default. The
 processor thread takes records from the inbox one at a time, calls the handler, and
 then calls the record's finalizer with the decision. The finalizer is the adapter
@@ -218,6 +270,7 @@ function that carries out the decision. Processing one record at a time is calle
 serial processing, and it is the only mode this adapter supports.
 
 ### How the adapter is put together today
+
 
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka.hs` is the public module. Its
 `kafkaAdapterWith` builds the source stream from three stages defined in
@@ -268,6 +321,7 @@ dropStaleRecords state =
 
 ### The defect
 
+
 Take one partition holding offsets 0 through 49 and a handler that returns `AckRetry`
 the first time it sees offset 20.
 
@@ -297,33 +351,40 @@ waiting.
 
 ### Test and tooling facts you will need
 
+
 Tests live in `shibuya-kafka-adapter/test` and use `tasty` with `tasty-hunit`.
-`test/Main.hs` lists the test modules.
-`test/Shibuya/Adapter/Kafka/AckHandleTest.hs` has broker-free tests built on a mock
+`shibuya-kafka-adapter/test/Main.hs` lists the test modules.
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/AckHandleTest.hs` has broker-free
+tests built on a mock
 `KafkaConsumer` interpreter that records store, seek, and pause calls but cannot poll.
-`test/Shibuya/Adapter/Kafka/IntegrationTest.hs` has live tests against a broker at
-`127.0.0.1:9092`, using helpers in `test/Kafka/TestEnv.hs` that create a topic and a
-consumer group with a random prefix per test.
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/IntegrationTest.hs` has live tests
+against a broker at
+`127.0.0.1:9092`, using helpers in `shibuya-kafka-adapter/test/Kafka/TestEnv.hs` that
+create a topic and a consumer group with a random prefix per test.
 
 Cabal must run inside the project's Nix development shell, because the Kafka client
 library is provided there. A bare `cabal build` fails with
 `ld: library not found for -lrdkafka`. Every command in this plan is therefore written
 as `nix develop -c bash -c '...'`.
 
-The broker is a shared Redpanda cluster that is already running on the development
-machine; this repository does not start one. Check it with
-`rpk cluster info -X brokers=127.0.0.1:9092`. If it is down, start it with
-`redpanda-up`.
+Live tests require a reachable Redpanda broker on the development machine; do not
+assume it is running. This repository does not start one. Check it with
+`rpk cluster info -X brokers=127.0.0.1:9092`. If the local helper is available,
+start it with
+`redpanda-up` and repeat the probe. If it still fails, run the broker-free selection
+below and leave live acceptance pending rather than recording a full-suite pass.
 
 `nix fmt` must be run before every commit (see `CLAUDE.md`).
 
 
 ## Plan of Work
 
+
 The change introduces a source gate: the stage that decides, for each polled record,
 whether to emit it, drop it, or hold it. It replaces `dropStaleRecords`.
 
 ### The design in one place
+
 
 The gate needs two facts that the current filter does not have.
 
@@ -359,14 +420,17 @@ stamp is at least `seekedAt`. The gate then applies these rules.
    `AckHalt` is dropped instead of held. The partition is paused and will not make
    progress.
 
-Every hold ends. Rule 4 only applies after rule 3 has emitted the redelivery, so the
+A hold ends when its replay is finalized, or when a lifecycle exit is signalled.
+Rule 4 only applies after rule 3 has emitted the redelivery, so the
 processor will reach that redelivery and finalize it. `AckOk` or `AckDeadLetter`
 clears the barrier and the held record is emitted. `AckRetry` raises `retryRequests`
 and the held record becomes stale and is dropped. `AckHalt` marks the partition halted
 and the held record is dropped. A revocation unassigns the partition and the held
 record is dropped. Shutdown and a recorded fatal error both end the wait. The runner
-always finalizes a record it has taken from the inbox, and when it stops early it
-cancels the ingester thread, which interrupts the wait.
+can finalize the replay independently of the ingester. A handler that never returns
+can still hold ingestion until shutdown or cancellation; no finite latency guarantee
+is made for arbitrary handlers. When the runner stops early it cancels the ingester
+thread, which interrupts the wait.
 
 The wait uses a small signal: a `TVar Word64` named `ackSignal` in
 `KafkaAdapterState` that is increased after every state change that can end a hold.
@@ -377,6 +441,7 @@ acknowledgement state itself stays in its `IORef`, so the per-record path for a
 partition with no barrier is one `readIORef` and one map lookup, as it is today.
 
 ### Milestone 1: characterize the defect and capture a benchmark baseline
+
 
 This milestone changes no library code. At its end the repository has a reusable
 broker-free log, a benchmark for the stage about to change, and recorded evidence that
@@ -500,10 +565,13 @@ runScriptedConsumer scripted =
 ```
 
 Create `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs`, add it to
-`other-modules`, and add its `tests` to the list in `test/Main.hs`. Its test group is
+`other-modules`, and add its `tests` to the list in
+`shibuya-kafka-adapter/test/Main.hs`. Its test group is
 named `Source gate`. Its first test case is named
-`buffered retry commits every successor (scripted log)`. The body below was run during
-planning as a standalone program; turn the final check into `tasty-hunit` assertions.
+`buffered retry commits every successor (scripted log)`. The body below is the
+September standalone prototype, not the final synchronized regression fixture.
+Adapt it using the scheduling and cleanup requirements immediately below the sample;
+turn the final store and seek checks into `tasty-hunit` assertions.
 
 ```haskell
 testBufferedRetryCommitsSuccessors :: IO ()
@@ -542,31 +610,59 @@ testBufferedRetryCommitsSuccessors = do
             liftIO $ waitUntil 500 reachedLogEnd
             stopApp appHandle
   -- Assert: outcome is Just (Right ()), stored == [0 .. 11], seeks == [4],
-  -- and deliveries == [0 .. 11] <> [4 .. 11].
+  -- The delivery trace below is historical; do not require a scheduler-specific equality.
 ```
 
-The five-millisecond pause in the handler makes the failure deterministic on the
-unchanged code: it guarantees the ingester has filtered the replayed successors before
-the processor reaches the second delivery of offset 4. The five-millisecond
-`pollTimeout` keeps the test fast, because an idle scripted poll holds the consumer
-lock for its whole timeout just as a real one does.
+The five-millisecond pause encourages the failing schedule; it does not guarantee
+it. Before returning the first retry, use a test-local wrapper around the adapter
+source to confirm the original batch has entered the inbox. One way is to append a
+one-time signal action immediately after the first twelve source yields: reaching
+that action means the runner has consumed and enqueued those twelve deliveries.
+The wrapper must signal on the next downstream pull, before requesting a thirteenth
+upstream element; waiting for a thirteenth record would hang on this twelve-record log.
+Have the first offset-4 handler await this signal. Do not block while holding
+`consumerLock`. Use `MVar`/`TMVar` handshakes for replay-handler entry and release;
+use timeouts only to bound waits or assert that no successor arrives while the
+replay is unresolved. Assert the stores `[0 .. 11]`, the seek `[4]`, and an observed
+redelivery of 4; keep the full delivery trace as diagnostics rather than requiring
+one thread schedule. The controlled gate tests in Milestone 2 provide the direct
+proof that a successor is retained across a pending replay.
 
-Add a live test to `test/Shibuya/Adapter/Kafka/IntegrationTest.hs` named
-`buffered retry commits every successor`. It produces twelve payloads `s-0` through
-`s-11` to a one-partition topic, runs `kafkaAdapter` under `runApp` with a handler that
-returns `AckRetry (RetryDelay 0)` the first time it sees `s-4` and `AckOk` otherwise,
-waits until the handler has returned `AckOk` for all twelve payloads, waits a further
-ten seconds, and calls `stopApp`. It then uses the existing `pollPayloads env 3` helper,
-which opens a second consumer in the same group, and asserts that it returns the empty
-list. Follow the shape of the existing `testHandlerExceptionRedelivery` for the effect
-stack (`runEff . runError @KafkaError . runTracingNoop`, then `runKafkaConsumer`). Give
-the whole test a sixty-second `timeout`. The ten-second wait is needed because a
-caught-up consumer finalizes about three records per second (see Surprises &
-Discoveries).
+Wrap the running app in `finally`/`bracket` so `stopApp` runs on assertion failure or
+timeout as well as success, while the Kafka interpreter remains in scope. Make an
+expired completion wait fail with the observed stores and deliveries instead of
+silently proceeding. Preserve the baseline failure evidence; a run that never
+exercised buffering is not a valid characterization of BUG-1.
+
+Add a live test to
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/IntegrationTest.hs` named
+`buffered retry commits every successor`. Produce twelve payloads `s-0` through
+`s-11` to a one-partition topic, allocate shared state, and run `kafkaAdapterWith`
+under `runApp`. Use the same initial-batch handshake before the first retry of
+`s-4`. The handler returns `AckRetry (RetryDelay 0)` once and `AckOk` otherwise.
+Follow `testHandlerExceptionRedelivery` for the effect stack. Bound the whole test
+including cleanup with a sixty-second timeout, and keep cleanup inside
+`runKafkaConsumer`.
+
+While the app is still running, use
+`Kafka.Effectful.Consumer.Effect.committed (Timeout 100)` for the explicit
+`(env.testTopic, PartitionId 0)` partition, under `withConsumerLock state`, until
+its `tpOffset` equals `PartitionOffset 12` or a thirty-second deadline expires.
+A handler returning `AckOk` is not evidence that its finalizer stored the offset.
+Report the last observed committed offset on failure. Stop the app and close the
+first consumer, then query the same group's committed offset with a second consumer
+and assert it is still 12. For the no-redelivery assertion, replace the bare
+`pollPayloads env 3` oracle with a bounded poll loop that first establishes the
+expected assignment via `assignment`, then checks a further bounded polling window
+returns no records. Assignment timeout is a failure, not an empty successful read.
+The expected unchanged-code committed offset is 5, with `s-5` through `s-11`
+available after restart. Capture that offset even if the live-progress assertion
+fails, and always perform cleanup.
 
 Run both tests on the unchanged code and paste the failing output into Surprises &
 Discoveries. The scripted test must fail with `stored` equal to `[0,1,2,3,4]`. The live
-test must fail because the second consumer receives `s-5` through `s-11`.
+test must fail with committed offset 5; a restarted, assigned consumer can then
+receive `s-5` through `s-11`.
 
 Add a benchmark group named `Source gate` to
 `shibuya-kafka-adapter-bench/bench/Main.hs` with one benchmark named
@@ -576,13 +672,21 @@ with increasing offsets, allocates a fresh `KafkaAdapterState`, runs
 `Stream.fold Fold.length`. The neighbouring `10k elements` benchmarks run their streams
 directly in `IO`; this stage runs in `Eff`, so wrap the fold in `runEff` before
 passing it to `nfIO`. Run it and record the mean and allocation figures in Surprises &
-Discoveries.
+Discoveries. Add `effectful-core` to this benchmark component's `build-depends`
+in `shibuya-kafka-adapter-bench/shibuya-kafka-adapter-bench.cabal`, matching the
+existing library constraint; a dependency of another component is not visible here.
+The package is already part of the resolved dependency set, so this is a component
+visibility fix, not an upgrade. Allocate state inside the measured IO action so
+samples do not share mutable state. Keep input preparation equivalent on both runs;
+if `Polled` values are prebuilt, label allocation results as gate-only rather than
+claiming to measure stamping in `kafkaSource`.
 
 Commit the helper module and the benchmark. Do not commit the two failing tests yet;
 keep them in the working tree and commit them with the fix in Milestone 2, so that no
 commit has a failing suite.
 
 ### Milestone 2: implement the source gate
+
 
 All library edits are in
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`, plus a one-word change
@@ -613,7 +717,10 @@ the change: `recordRetry` when it accepts a retry, `claimStore` when it clears t
 barrier, `setPartitionsAssigned` always, the new `markSeekCompleted`, the new
 `markHalted`, and `recordFatalError`. `claimStore` currently returns only whether to
 store; have its inner modification also return whether it cleared the barrier, and
-signal when it did.
+signal when it did. Use `Control.Exception.mask_` around each short mutation-plus-
+signal action, including the fatal-slot write; do not mask the gate wait or hold
+`consumerLock` while waiting. For `markHalted`, test delivery acceptance and update
+`halted` in one atomic modification so revocation cannot invalidate a separate check.
 
 Change `recordRetry` to return `Maybe (Offset, Word64)`: the seek target and the new
 value of `retryRequests`. In every branch that accepts the retry, increase
@@ -641,8 +748,9 @@ Just (target, request) ->
 
 `markSeekCompleted` increases `seekSerial`, sets the partition's `seekedAt` to the new
 serial, and sets `seeksCompleted` to the larger of its current value and `request`.
-In the `AckHalt` branch, call `markHalted`, which sets `halted` to `True`, before
-pausing the partition, and only when the delivery is accepted. In
+In the `AckHalt` branch, call `markHalted`, which atomically checks acceptance
+and sets `halted` to `True`, before pausing the partition; pause only if it accepted
+the delivery. In
 `setPartitionsAssigned`, the branch that advances the assignment generation must also
 set `seeksCompleted` to the current `retryRequests` and `halted` to `False`, so that a
 retry whose seek was overtaken by a rebalance does not leave the partition permanently
@@ -762,7 +870,11 @@ interpreter pattern from `AckHandleTest.hs` (copy `runFinalizer`, `runMockConsum
 `recordAt`, and `testConfig`, or move them to a shared test module), and then pulls
 `Polled` records through `gateRecords state (Stream.fromList ...)`. For cases that
 expect a hold, run the stream fold in an `Async` that appends each emitted offset to an
-`IORef`, and assert with `System.Timeout.timeout`.
+`IORef`, and assert with `System.Timeout.timeout`. Use `Async.withAsync` so every
+failure or timeout cancels and joins the worker. Synchronize on emission of 42 and
+on the input stream offering 43 before checking that it is held; otherwise a slow
+worker could make the negative assertion pass without exercising the gate. Allocate
+the replay's real ack handle when 42 is emitted and retain it for finalization.
 
 - A record polled before a retry seek is dropped: retry offset 42, then feed offsets
   43 and 44 stamped with serial 0. Nothing is emitted.
@@ -781,15 +893,35 @@ expect a hold, run the stream fold in an `Async` that appends each emitted offse
   on partition 0, then feed partition 1 records stamped with serial 0. All are emitted.
 - A held successor of a halted partition is dropped: after the replay of 42 is
   emitted, finalize it with `AckHalt`. The fold ends having emitted only 42.
-- A revoked partition's records are dropped: call `kafkaRebalanceHandler` with a
-  `RebalanceRevoke` for the partition and feed fresh records. Nothing is emitted.
+- A revoked partition's records are dropped: retain the already-revoked case, and
+  also establish a hold on 43 after emitting 42, then call `kafkaRebalanceHandler`
+  with `RebalanceRevoke`. The worker ends within one second without emitting 43.
+- `AckDeadLetter` on the replay releases its held successor just as `AckOk` does.
+- A fatal acknowledgement error wakes a hold: while 43 is held, exhaust a mocked
+  acknowledgement on another partition, leaving the original barrier intact.
+  Catch the expected finalizer exception, assert the gate worker exits without 43,
+  and assert the subsequent `kafkaSource` step throws the recorded `KafkaError`
+  before invoking the mock poll. This tests `recordFatalError` signalling rather
+  than a manual fatal-slot write or a barrier-clearing store.
+- A requested but incomplete seek makes records stale: block the mock seek with
+  an `MVar`, feed a record stamped with the current serial, and assert it is dropped
+  before the seek completes. Release the seek and verify fresh replay admission.
+- Clearing a missing-offset barrier fences old callbacks: retain an earlier handle
+  for offset 46, feed a fresh replay starting at 45, then finalize the old handle
+  with `AckRetry`, then repeat the setup with a separate old handle for `AckOk`.
+  Neither callback stores nor seeks; a newly registered
+  delivery of 45 stores normally. Check the warning and the old-token fence, not
+  merely that 45 and 46 are emitted.
+- Cancelling a held gate worker terminates it promptly; a later replay finalizer
+  can still acquire the consumer lock and resolve the barrier.
 
 Add one more scripted-log test,
 `a record that retries twice still commits every successor (scripted log)`. It is the
 first scripted test with a handler that returns `AckRetry` for offset 4 on its first
 two deliveries. It shows, end to end, that the successors held behind the first
 redelivery are discarded when that redelivery fails and are delivered again behind the
-second one. The prototype produced these values, which the test asserts.
+second one. Assert stores and seeks, and record deliveries as diagnostics. The
+prototype produced this delivery trace under its particular buffered schedule:
 
 ```text
 deliveries = [0,1,2,3,4,5,6,7,8,9,10,11,4,4,5,6,7,8,9,10,11]
@@ -797,29 +929,49 @@ stored     = [0,1,2,3,4,5,6,7,8,9,10,11]
 seeks      = [4,4]
 ```
 
-Run the whole suite. The 53 tests that existed before this plan, the two
-characterization tests, the double-retry scripted test, and the eight gate tests must
-pass. Commit the library change and all tests together.
+Add a broker-free serial batch-processor regression in the same test module. Use
+`mkBatchProcessor adapter handler batchConfig` with
+`defaultBatchConfig {batchSize = 12, batchTimeout = 0.05, tickInterval = Just 0.01}`.
+The batch helpers are exported by `Shibuya.Batch`; `mkBatchProcessor` is exported
+by `Shibuya.App` and defaults to serial processing. For the first batch, return
+`ackExcept [(firstMessageId, AckRetry (RetryDelay 0))]`, then `ackAllOk` on later
+batches. Only the first record requests retry; the initially buffered successors'
+successes cannot store above that barrier. Assert a `TriggerTimeout` batch contains
+the single replay of offset 0, its finalization releases the held successor, and
+all offsets 0 through 11 are eventually stored. Bound completion and clean up the
+app on failure. These APIs were checked in the Mori-discovered source for
+`mori://shinzui/shibuya/packages/shibuya-core`; its guide is
+`mori://shinzui/shibuya/docs/readme`.
+
+Run the whole suite. All 53 existing tests, both characterization tests, the
+additional scripted runner tests, and every gate scenario above must pass. Commit
+the library change and all tests together.
 
 ### Milestone 3: prove nothing regressed
 
+
 Run the `Source gate` benchmark, now over `gateRecords` with records stamped with
-serial 0, and compare it with the Milestone 1 baseline. The path for a partition with
+serial 0 (update the benchmark import and wrapping in the Milestone 2 commit so
+that commit still builds), and compare it with the Milestone 1 baseline. The path
+for a partition with
 no barrier does the same `readIORef` and map lookup as before plus two integer
 comparisons and one `Polled` wrapper per record, so the mean should stay within ten
-percent and allocation should rise by no more than one small constructor per record.
+percent. Record allocation as measured; the original gate-only benchmark cannot
+establish a bound on allocation in polling and stamping.
 Record both sets of numbers in Surprises & Discoveries. If the mean regresses by more
 than ten percent, stop and record the measurement in the Decision Log before choosing
-between accepting it and reworking the wrapper.
+the next optimization. Do not silently waive the ten-percent acceptance limit;
+any changed performance acceptance must be an explicit plan decision.
 
-Build all three packages, so that the examples and the benchmark package still
-compile against the changed internal module.
+Build all three packages with `--enable-benchmarks`, so that the examples and the
+benchmark package still compile against the changed internal module.
 
 Run the full test suite ten times in a row. The hold introduces a wait on the
 ingester thread, and repeated runs are the practical check that no test depends on
 timing that the wait changed. All ten runs must pass.
 
 ### Milestone 4: documentation and records
+
 
 Update the prose that describes retry behaviour so that it matches the code. In
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka.hs`, extend item 4 of the
@@ -838,8 +990,8 @@ frontmatter `evidence` list, add an entry for
 `generated` to the model and time of the edit, then add a log entry and validate, as
 shown in Concrete Steps.
 
-Add an `Unreleased` section at the top of `shibuya-kafka-adapter/CHANGELOG.md` with a
-`Bug Fixes` entry describing the fix in user terms, and an `Other Changes` entry
+Add or extend an `Unreleased` section at the top of
+`shibuya-kafka-adapter/CHANGELOG.md` with a `Bug Fixes` entry describing the fix in user terms, and an `Other Changes` entry
 noting that `Shibuya.Adapter.Kafka.Internal.dropStaleRecords` is replaced by
 `gateRecords` and that `kafkaSource` now yields `Polled` records.
 
@@ -861,6 +1013,7 @@ branch. Add a log entry and validate as shown in Concrete Steps.
 
 ## Concrete Steps
 
+
 All commands run from the repository root,
 `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya-kafka-adapter`.
 
@@ -876,21 +1029,29 @@ Run the whole test suite.
 nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming'
 ```
 
-Before this plan the last lines are as follows.
+Historical full-suite output from September planning was as follows (not a fresh
+live-broker result from this review).
 
 ```text
 All 53 tests passed (10.91s)
 Test suite shibuya-kafka-adapter-test: PASS
 ```
 
-Run only the new group.
+For a broker-free baseline when the broker is unavailable, run:
+
+```bash
+nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming --test-option=-p --test-option="!/Integration/"'
+```
+
+On the reviewed 0.10.0.0 checkout this passes all 40 broker-free tests; it does not
+validate the 13 live tests. Run only the new group after adding it:
 
 ```bash
 nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming --test-option=-p --test-option="/Source gate/"'
 ```
 
 After Milestone 2 the scripted test reports success, and the values it asserts on are
-these.
+these (the delivery trace is diagnostic, not a required thread schedule).
 
 ```text
 deliveries = [0,1,2,3,4,5,6,7,8,9,10,11,4,5,6,7,8,9,10,11]
@@ -901,7 +1062,7 @@ seeks      = [4]
 Run the live characterization test alone.
 
 ```bash
-nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming --test-option=-p --test-option="/buffered retry commits every successor/"'
+nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming --test-option=-p --test-option="/Integration/ && /buffered retry commits every successor/"'
 ```
 
 Run the benchmark for the gate, first in Milestone 1 to write a baseline and then in
@@ -918,14 +1079,13 @@ nix develop -c bash -c 'cabal bench shibuya-kafka-adapter-bench --benchmark-opti
 Delete `shibuya-kafka-adapter-bench/source-gate-baseline.csv` when Milestone 3 is
 done; it is a scratch file and must not be committed.
 
-Build everything. At the time of writing `cabal build all` fails while compiling
-`crypton-2.1.3`, a dependency of the example package, with
-`fatal error: 'p256/p256_verify.h' file not found`. That is a fault in that upstream
-release and unrelated to this work; the constraint below avoids it. Drop the
-constraint once the plain command succeeds.
+Build all packages and explicitly enable the benchmark component. This command
+passed on the reviewed checkout without a `crypton` constraint; do not carry forward
+the September workaround. If a new dependency failure appears, use Mori plus the
+authoritative package registry and upstream release tags before choosing a workaround.
 
 ```bash
-nix develop -c bash -c "cabal build all --constraint='crypton <2.1.3'"
+nix develop -c bash -c 'cabal build all --enable-benchmarks'
 ```
 
 Run the suite ten times and stop at the first failure.
@@ -945,11 +1105,14 @@ okf validate docs/bug-reports --strict --profile docs/bug-reports/profile.dhall 
 
 Each `okf validate` prints a line beginning with `OK:`.
 
-Format and commit. Every commit for this plan carries both trailers.
+Format and stage only this plan's implementation files, explicitly adding new files
+as well as reviewing tracked changes with `git add -p`. Every commit for this plan
+carries both trailers. Keep the failing characterization tests out of the Milestone 1
+commit; Milestone 2 includes them with the fix.
 
 ```bash
 nix fmt
-git add -A
+git add -p
 git commit
 ```
 
@@ -965,39 +1128,44 @@ Intention: intention_01m3sbterne78sx93pm5d6qf66
 
 ## Validation and Acceptance
 
+
 The plan is complete when all of the following hold.
 
 The scripted test `buffered retry commits every successor (scripted log)` passes. With
 the library change reverted it fails with `stored` equal to `[0,1,2,3,4]`.
 
-The live test `buffered retry commits every successor` passes: after the session
-ends, a second consumer in the same group receives no records. With the library change
-reverted it receives `s-5` through `s-11`.
+The live test `buffered retry commits every successor` passes: the committed offset
+is 12 while running and after close, and a second consumer with verified assignment
+receives no records. With the library change reverted the commit remains 5, leaving
+`s-5` through `s-11` available after restart.
 
-The double-retry scripted test passes with the values shown in Milestone 2.
+The double-retry scripted test stores every offset and seeks twice to 4. The serial
+batch-processor test drains successfully despite holding successors until the replay
+batch is emitted by timeout. Delivery traces remain diagnostic.
 
-The eight deterministic gate tests pass. Between them they show that a stale record is
-dropped, that a replayed successor waits and is then emitted, that the wait ends on a
-second retry, on halt, on revocation, and on shutdown, that a vanished retried record
-does not block the partition, and that a seek on one partition leaves the others
-alone.
+Every controlled gate scenario in Milestone 2 passes. They cover stale and pending-
+seek drops, release on success and dead letter, repeated retry, halt, revocation,
+shutdown, fatal error, cancellation, missing-offset recovery with old callbacks
+fenced, and unaffected records from another partition.
 
 Every test that existed before this plan still passes, unchanged except for the one
-line in `source observes fatal slot before polling` that inserts `gateRecords`. In
+pipeline adaptation in `source observes fatal slot before polling` that inserts
+`gateRecords`. Update the benchmark to the new internal API in the same commit. In
 particular `later buffered retry cannot replace the earliest recovery boundary` and
 `fixed-seed sequences match the earliest-unresolved reference model` still pass, which
 shows that the BUG-5 fix is intact.
 
 The `Source gate` benchmark is within ten percent of its baseline mean.
 
-`cabal build all` succeeds and the suite passes ten times in a row.
+`cabal build all --enable-benchmarks` succeeds and the suite passes ten times in a row.
 
-Handler order is not part of acceptance. After this plan the scripted test shows
+Handler order is not part of acceptance. The historical scripted trace shows
 handlers running for offsets 5 through 11 before the second delivery of offset 4 and
 again after it. That is BUG-2 and is addressed by plan 17.
 
 
 ## Idempotence and Recovery
+
 
 Every step can be repeated. The tests create topics and consumer groups with a random
 ten-character prefix, so reruns never collide; they leave those small topics on the
@@ -1012,14 +1180,18 @@ after every state change listed in Milestone 2, and that it is called after the
 
 The library change is confined to two source files and can be reverted with
 `git revert` of the Milestone 2 commit. The helper module and benchmark from
-Milestone 1 are independent of it and may stay.
+Milestone 1 may stay; reverting Milestone 2 must restore the benchmark's original
+`dropStaleRecords` import and raw-record input along with the library API.
 
 Do not release from this plan. Releasing is a separate, user-initiated step.
 
 
 ## Interfaces and Dependencies
 
-No dependency is added or changed. The test suite already depends on `async`, `stm`,
+
+No library or test dependency version is changed. The benchmark component gains a
+direct `effectful-core` dependency matching the existing library constraint. The test
+suite already depends on `async`, `stm`,
 `streamly-core`, `tasty`, and `tasty-hunit`, which are all the new tests need. The
 library already depends on `stm`.
 
@@ -1062,8 +1234,17 @@ change. That work belongs to that repository and is not part of this plan.
 Two limits of the new behaviour should be stated in the documentation written in
 Milestone 4. While a replayed successor is held the ingester thread does not poll, so
 records of other partitions wait too; the wait ends when the processor finalizes the
-redelivered record, which is already in the inbox. With a batch processor that can
-take up to one `batchTimeout`, because the batch containing the redelivered record
-must first be emitted. And a consumer that pulls the source stream directly and asks
+redelivered record, which is already in the inbox. A batch processor must first
+emit the batch containing the replay; its timeout
+and tick interval add latency, as can queued processing and handler time. There is
+no wall-clock upper bound of one `batchTimeout`. Long holds can also exceed the
+consumer's configured maximum poll interval, so the hold is not a polling or
+rebalance-avoidance guarantee. A consumer that pulls the source stream directly and asks
 for the next record before finalizing a redelivered one will wait indefinitely; the
 current code leaves that consumer waiting too, by dropping the record it is asking for.
+
+
+Revision note (2026-10-25): reviewed against the current code and ADR 0001; corrected
+component dependencies and obsolete build guidance, replaced weak completion oracles,
+added missing hold-exit and batch acceptance, and made notification publication
+cancellation-safe. Original prototype observations are retained as historical evidence.
