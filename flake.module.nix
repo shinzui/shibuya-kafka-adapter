@@ -81,8 +81,8 @@
             shibuya-core = pkgs.haskell.lib.dontCheck (hself.callHackageDirect
               {
                 pkg = "shibuya-core";
-                ver = "0.9.0.3";
-                sha256 = "1bh2dhpzcmzsz0qagqrhhsfkpkd8k3fypl5y5h8fzj02fw67yiy3";
+                ver = "0.11.0.0";
+                sha256 = "0d7g4vz3w2dmibrc9bfaxmbzgsn3qi55dhyd751x3bn88zfzpvs4";
               }
               { });
             # unicode-data-0.6's tests compare against GHC 9.12.4's newer
@@ -91,10 +91,8 @@
           };
         };
       in
-      # The repository tests exercise lifecycle APIs from the unreleased
-        # Shibuya candidate and run in the cross-repository Cabal gate. Keep the
-        # portable flake on released Hackage inputs and build the distributable
-        # library here until that candidate has been published.
+      # Integration tests require a running Kafka broker. Build the library
+        # here and run the full test suite through the Cabal release gate.
       pkgs.haskell.lib.dontCheck (
         haskellPackages.callCabal2nix "shibuya-kafka-adapter" ./shibuya-kafka-adapter { }
       )

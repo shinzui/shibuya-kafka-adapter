@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.0.0 — 2026-10-25
+
+### Breaking Changes
+
+- Require `shibuya-core ^>=0.11.0.0` across the library, tests, examples, and
+  benchmarks. This adopts the extended application configuration, processor
+  metrics, and paused-state API from `mori://shinzui/shibuya`.
+
+### Other Changes
+
+- Keep all three repository packages on the shared `0.10.0.0` version line.
+- Update the Nix library build to use the published Shibuya core 0.11.0.0.
+
 ## 0.9.1.0 — 2026-09-21
 
 ### Bug Fixes
