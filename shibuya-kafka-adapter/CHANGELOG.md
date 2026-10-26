@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- Retain replayed successors behind a pending retry so successful processing
+  advances stored offsets to the log end without a restart. Missing retry offsets
+  resume at the next available record with a warning.
+
+### Other Changes
+
+- Replace internal `dropStaleRecords` with `gateRecords`; internal `kafkaSource`
+  now yields seek-stamped `Polled` records.
+
 ## 0.10.0.0 — 2026-10-25
 
 ### Breaking Changes

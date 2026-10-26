@@ -34,6 +34,8 @@
 -- 4. On @AckRetry@, the offset is not stored. The adapter seeks the partition
 --    back to the earliest unresolved delivery so Kafka can redeliver it. Later
 --    buffered callbacks cannot replace or commit past that recovery boundary.
+--    Pre-seek records are discarded; replayed successors wait until the retry
+--    resolves. A missing retry offset is abandoned with a warning.
 -- 5. On @AckDeadLetter@, the offset is stored after a loud stderr warning.
 -- 6. On @AckHalt@, the partition is paused and offset is not stored.
 --
@@ -129,7 +131,7 @@ import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets, subscri
 import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), Timeout (..), TopicName (..))
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
-import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), dropStaleRecords, ingestedStream, kafkaSource, markPartitionsAssigned, markPartitionsRevoked, mkIngested, newKafkaAdapterState, withConsumerLock)
+import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), gateRecords, ingestedStream, kafkaSource, markPartitionsAssigned, markPartitionsRevoked, mkIngested, newKafkaAdapterState, withConsumerLock)
 import System.IO (hPutStrLn, stderr)
 
 -- | Create a Kafka adapter with the given configuration.
@@ -172,7 +174,7 @@ kafkaAdapterWith state config = do
   warnOnSubscriptionMismatch config
   let messageSource =
         ingestedStream (mkIngested state config) $
-          dropStaleRecords state $
+          gateRecords state $
             kafkaSource state config
   pure
     Adapter

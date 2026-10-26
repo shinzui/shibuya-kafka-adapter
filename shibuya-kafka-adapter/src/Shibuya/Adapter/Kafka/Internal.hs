@@ -11,7 +11,8 @@ module Shibuya.Adapter.Kafka.Internal
 
     -- * Stream Construction
     kafkaSource,
-    dropStaleRecords,
+    Polled (..),
+    gateRecords,
     ingestedStream,
 
     -- * Ingested Construction
@@ -24,7 +25,8 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, newMVar, putMVar, takeMVar)
-import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, retry)
+import Control.Exception qualified as IOExc
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.Function ((&))
@@ -68,18 +70,24 @@ newtype AssignmentGeneration = AssignmentGeneration Word64
 
 data RetryBarrier = RetryBarrier
   { offset :: !Offset,
-    retryToken :: !DeliveryToken
+    retryToken :: !DeliveryToken,
+    replayed :: !Bool
   }
 
 data PartitionAckState = PartitionAckState
   { barrier :: !(Maybe RetryBarrier),
     validFromToken :: !DeliveryToken,
     assignmentGeneration :: !AssignmentGeneration,
-    assigned :: !Bool
+    assigned :: !Bool,
+    retryRequests :: !Word64,
+    seeksCompleted :: !Word64,
+    seekedAt :: !Word64,
+    halted :: !Bool
   }
 
 data AckState = AckState
   { nextDeliveryToken :: !Word64,
+    seekSerial :: !Word64,
     partitions :: !(Map PartitionKey PartitionAckState)
   }
 
@@ -104,16 +112,21 @@ initialPartitionAckState =
     { barrier = Nothing,
       validFromToken = DeliveryToken 0,
       assignmentGeneration = AssignmentGeneration 0,
-      assigned = True
+      assigned = True,
+      retryRequests = 0,
+      seeksCompleted = 0,
+      seekedAt = 0,
+      halted = False
     }
 
 initialAckState :: AckState
-initialAckState = AckState {nextDeliveryToken = 1, partitions = Map.empty}
+initialAckState = AckState {nextDeliveryToken = 1, seekSerial = 0, partitions = Map.empty}
 
 -- | Mutable state shared by the source stream and ack handles.
 data KafkaAdapterState = KafkaAdapterState
   { shutdownVar :: !(TVar Bool),
     ackState :: !(IORef AckState),
+    ackSignal :: !(TVar Word64),
     fatalError :: !(IORef (Maybe KafkaError)),
     -- | Serializes every librdkafka consumer operation. Under
     --     'Shibuya.App.runApp' the consumer handle is shared between the ingester
@@ -134,6 +147,7 @@ newKafkaAdapterState =
   KafkaAdapterState
     <$> newTVarIO False
     <*> newIORef initialAckState
+    <*> newTVarIO 0
     <*> newIORef Nothing
     <*> newMVar ()
 
@@ -150,10 +164,11 @@ markPartitionsRevoked :: KafkaAdapterState -> [PartitionKey] -> IO ()
 markPartitionsRevoked state = setPartitionsAssigned state False
 
 setPartitionsAssigned :: KafkaAdapterState -> Bool -> [PartitionKey] -> IO ()
-setPartitionsAssigned state isAssigned keys =
+setPartitionsAssigned state isAssigned keys = IOExc.mask_ $ do
   atomicModifyIORef' state.ackState $ \ackState' ->
     let partitions' = foldr (Map.alter (Just . transition . maybe initialPartitionAckState id)) ackState'.partitions keys
      in (ackState' {partitions = partitions'}, ())
+  signalAckState state
   where
     transition partitionState
       | partitionState.assigned == isAssigned =
@@ -165,7 +180,9 @@ setPartitionsAssigned state isAssigned keys =
             { barrier = Nothing,
               validFromToken = DeliveryToken 0,
               assignmentGeneration = nextGeneration partitionState.assignmentGeneration,
-              assigned = isAssigned
+              assigned = isAssigned,
+              seeksCompleted = partitionState.retryRequests,
+              halted = False
             }
 
     nextGeneration (AssignmentGeneration generation') = AssignmentGeneration (generation' + 1)
@@ -203,7 +220,8 @@ maxPollHoldMillis = 100
 boundedLockTimeout :: Timeout -> Timeout
 boundedLockTimeout t = Timeout (min (unTimeout t) maxPollHoldMillis)
 
--- | Create a stream of 'ConsumerRecord's by repeatedly polling the broker.
+-- | Poll records and stamp each successful record with the completed seek serial
+-- under the consumer lock. Feed this stream through 'gateRecords'.
 --
 -- Calls 'pollMessageBatch' in a loop under 'consumerLock', preserving errors as
 -- @Left@ values. Each poll uses a timeout capped at @maxPollHoldMillis@ so the
@@ -216,7 +234,7 @@ kafkaSource ::
   (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
   KafkaAdapterState ->
   KafkaAdapterConfig ->
-  Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
+  Stream (Eff es) (Either KafkaError Polled)
 kafkaSource state config =
   skipNonFatal $
     Stream.unfoldrM step ()
@@ -232,25 +250,96 @@ kafkaSource state config =
       if isShutdown
         then pure Nothing
         else do
-          batch <- withConsumerLock state (pollMessageBatch pollT config.batchSize)
+          batch <- withConsumerLock state $ do
+            records <- pollMessageBatch pollT config.batchSize
+            serial <- Effectful.liftIO $ (.seekSerial) <$> readIORef state.ackState
+            pure (map (fmap (Polled serial)) records)
           pure (Just (batch, ()))
 
--- | Drop records already buffered above a pending retry barrier.
-dropStaleRecords ::
+-- | A record stamped under the consumer lock with the latest completed seek.
+data Polled = Polled
+  { pollSerial :: !Word64,
+    record :: !(ConsumerRecord (Maybe ByteString) (Maybe ByteString))
+  }
+
+data Admission = Emit | EmitAfterGap !Offset | Drop | Hold
+
+-- | Drop pre-seek records; retain post-seek successors until their replay resolves.
+-- Holds are interruptible and never own the consumer lock. Missing offsets are
+-- abandoned with a warning, fencing callbacks from before the gap.
+gateRecords ::
   (IOE :> es) =>
   KafkaAdapterState ->
-  Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString))) ->
+  Stream (Eff es) (Either KafkaError Polled) ->
   Stream (Eff es) (Either KafkaError (ConsumerRecord (Maybe ByteString) (Maybe ByteString)))
-dropStaleRecords state =
-  Stream.filterM $ \case
-    Left _ -> pure True
-    Right cr -> do
-      ackState' <- Effectful.liftIO $ readIORef state.ackState
-      let partitionState = Map.findWithDefault initialPartitionAckState (partitionKey cr) ackState'.partitions
-      pure $
-        partitionState.assigned && case partitionState.barrier of
-          Nothing -> True
-          Just retryBarrier -> cr.crOffset <= retryBarrier.offset
+gateRecords state =
+  Stream.mapMaybeM $ \case
+    Left err -> pure (Just (Left err))
+    Right polled -> do
+      admitted <- Effectful.liftIO $ admitRecord state polled
+      pure $ if admitted then Just (Right polled.record) else Nothing
+
+admitRecord :: KafkaAdapterState -> Polled -> IO Bool
+admitRecord state polled = do
+  ackState' <- readIORef state.ackState
+  let partitionState = Map.findWithDefault initialPartitionAckState key ackState'.partitions
+  case (partitionState.barrier, isFresh partitionState) of
+    (Nothing, True) -> pure True
+    _ -> wait
+  where
+    cr = polled.record
+    key = partitionKey cr
+
+    isFresh partitionState =
+      partitionState.assigned
+        && partitionState.retryRequests == partitionState.seeksCompleted
+        && polled.pollSerial >= partitionState.seekedAt
+
+    wait = do
+      version <- readTVarIO state.ackSignal
+      admission <- atomicModifyIORef' state.ackState decide
+      case admission of
+        Emit -> pure True
+        EmitAfterGap missing -> do
+          hPutStrLn stderr $
+            "[shibuya-kafka-adapter] WARNING: retried record is no longer in the log; resuming after it: "
+              <> show (cr.crTopic, cr.crPartition, missing)
+          pure True
+        Drop -> pure False
+        Hold -> do
+          mbFatal <- readIORef state.fatalError
+          case mbFatal of
+            Just _ -> pure False
+            Nothing -> do
+              stop <- atomically $ do
+                isShutdown <- readTVar state.shutdownVar
+                current <- readTVar state.ackSignal
+                if isShutdown
+                  then pure True
+                  else if current /= version then pure False else retry
+              if stop then pure False else wait
+
+    decide ackState' =
+      let partitionState = Map.findWithDefault initialPartitionAckState key ackState'.partitions
+          update partitionState' = ackState' {partitions = Map.insert key partitionState' ackState'.partitions}
+       in if not (isFresh partitionState)
+            then (ackState', Drop)
+            else case partitionState.barrier of
+              Nothing -> (ackState', Emit)
+              Just retryBarrier
+                | cr.crOffset < retryBarrier.offset -> (ackState', Emit)
+                | cr.crOffset == retryBarrier.offset ->
+                    (update partitionState {barrier = Just retryBarrier {replayed = True}}, Emit)
+                | partitionState.halted -> (ackState', Drop)
+                | retryBarrier.replayed -> (ackState', Hold)
+                | otherwise ->
+                    ( update
+                        partitionState
+                          { barrier = Nothing,
+                            validFromToken = max partitionState.validFromToken (DeliveryToken ackState'.nextDeliveryToken)
+                          },
+                      EmitAfterGap retryBarrier.offset
+                    )
 
 -- | Create an 'AckHandle' for a single 'ConsumerRecord'.
 --
@@ -315,9 +404,9 @@ finalizeAttempt state config attempt cr = \case
     mbTarget <- Effectful.liftIO $ recordRetry state attempt
     case mbTarget of
       Nothing -> pure ()
-      Just target ->
+      Just (target, request) ->
         ackAttempt state $
-          withConsumerLock state $
+          withConsumerLock state $ do
             seekPartitions
               [ TopicPartition
                   { tpTopicName = cr.crTopic,
@@ -326,6 +415,7 @@ finalizeAttempt state config attempt cr = \case
                   }
               ]
               (boundedLockTimeout config.pollTimeout)
+            Effectful.liftIO $ markSeekCompleted state attempt.partition request
   AckDeadLetter reason ->
     storeGuarded state attempt cr $
       Effectful.liftIO $
@@ -335,7 +425,7 @@ finalizeAttempt state config attempt cr = \case
             <> " reason="
             <> Text.unpack (renderDeadLetterReason reason)
   AckHalt _ -> do
-    isAccepted <- Effectful.liftIO $ deliveryIsAccepted state attempt
+    isAccepted <- Effectful.liftIO $ markHalted state attempt
     when isAccepted $
       ackAttempt state (withConsumerLock state (pausePartitions [(cr.crTopic, cr.crPartition)]))
 
@@ -360,10 +450,11 @@ ackAttempt state action = go (1 :: Int)
             go (attempt + 1)
 
 recordFatalError :: KafkaAdapterState -> KafkaError -> IO ()
-recordFatalError state err =
+recordFatalError state err = IOExc.mask_ $ do
   atomicModifyIORef' state.fatalError $ \case
     Just existing -> (Just existing, ())
     Nothing -> (Just err, ())
+  signalAckState state
 
 storeGuarded ::
   (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
@@ -378,36 +469,41 @@ storeGuarded state attempt cr beforeStore = do
     beforeStore
     ackAttempt state (withConsumerLock state (storeOffsetMessage cr))
 
-recordRetry :: KafkaAdapterState -> DeliveryAttempt -> IO (Maybe Offset)
-recordRetry state attempt =
-  atomicModifyIORef' state.ackState $ \ackState' ->
+recordRetry :: KafkaAdapterState -> DeliveryAttempt -> IO (Maybe (Offset, Word64))
+recordRetry state attempt = IOExc.mask_ $ do
+  result <- atomicModifyIORef' state.ackState $ \ackState' ->
     let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
      in if not (attemptIsAccepted partitionState attempt)
           then (ackState', Nothing)
           else
             let retryBarrier = case partitionState.barrier of
-                  Nothing -> RetryBarrier attempt.recordOffset attempt.token
+                  Nothing -> RetryBarrier attempt.recordOffset attempt.token False
                   Just existing
-                    | attempt.recordOffset < existing.offset -> RetryBarrier attempt.recordOffset attempt.token
+                    | attempt.recordOffset < existing.offset -> RetryBarrier attempt.recordOffset attempt.token False
                     | attempt.recordOffset == existing.offset && attempt.token > existing.retryToken ->
                         existing {retryToken = attempt.token}
                     | otherwise -> existing
-                partitionState' = partitionState {barrier = Just retryBarrier}
+                partitionState' = partitionState {barrier = Just retryBarrier {replayed = False}, retryRequests = partitionState.retryRequests + 1}
                 ackState'' = ackState' {partitions = Map.insert attempt.partition partitionState' ackState'.partitions}
-             in (ackState'', Just retryBarrier.offset)
+             in (ackState'', Just (retryBarrier.offset, partitionState'.retryRequests))
+
+  case result of
+    Nothing -> pure ()
+    Just _ -> signalAckState state
+  pure result
 
 claimStore :: KafkaAdapterState -> DeliveryAttempt -> IO Bool
-claimStore state attempt =
-  atomicModifyIORef' state.ackState $ \ackState' ->
+claimStore state attempt = IOExc.mask_ $ do
+  (accepted, cleared) <- atomicModifyIORef' state.ackState $ \ackState' ->
     let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
      in if not (attemptIsAccepted partitionState attempt)
-          then (ackState', False)
+          then (ackState', (False, False))
           else case partitionState.barrier of
-            Nothing -> (ackState', True)
+            Nothing -> (ackState', (True, False))
             Just retryBarrier
-              | attempt.recordOffset > retryBarrier.offset -> (ackState', False)
-              | attempt.recordOffset < retryBarrier.offset -> (ackState', True)
-              | attempt.token <= retryBarrier.retryToken -> (ackState', False)
+              | attempt.recordOffset > retryBarrier.offset -> (ackState', (False, False))
+              | attempt.recordOffset < retryBarrier.offset -> (ackState', (True, False))
+              | attempt.token <= retryBarrier.retryToken -> (ackState', (False, False))
               | otherwise ->
                   let partitionState' =
                         partitionState
@@ -415,13 +511,32 @@ claimStore state attempt =
                             validFromToken = max partitionState.validFromToken attempt.token
                           }
                       ackState'' = ackState' {partitions = Map.insert attempt.partition partitionState' ackState'.partitions}
-                   in (ackState'', True)
+                   in (ackState'', (True, True))
 
-deliveryIsAccepted :: KafkaAdapterState -> DeliveryAttempt -> IO Bool
-deliveryIsAccepted state attempt = do
-  ackState' <- readIORef state.ackState
-  let partitionState = Map.findWithDefault initialPartitionAckState attempt.partition ackState'.partitions
-  pure $ attemptIsAccepted partitionState attempt
+  when cleared $ signalAckState state
+  pure accepted
+
+signalAckState :: KafkaAdapterState -> IO ()
+signalAckState state = atomically $ modifyTVar' state.ackSignal (+ 1)
+
+markSeekCompleted :: KafkaAdapterState -> PartitionKey -> Word64 -> IO ()
+markSeekCompleted state key request = IOExc.mask_ $ do
+  atomicModifyIORef' state.ackState $ \ledger ->
+    let serial = ledger.seekSerial + 1
+        partition = Map.findWithDefault initialPartitionAckState key ledger.partitions
+        updated = partition {seekedAt = serial, seeksCompleted = max partition.seeksCompleted request}
+     in (ledger {seekSerial = serial, partitions = Map.insert key updated ledger.partitions}, ())
+  signalAckState state
+
+markHalted :: KafkaAdapterState -> DeliveryAttempt -> IO Bool
+markHalted state attempt = IOExc.mask_ $ do
+  accepted <- atomicModifyIORef' state.ackState $ \ledger ->
+    let partition = Map.findWithDefault initialPartitionAckState attempt.partition ledger.partitions
+     in if attemptIsAccepted partition attempt
+          then (ledger {partitions = Map.insert attempt.partition partition {halted = True} ledger.partitions}, True)
+          else (ledger, False)
+  when accepted $ signalAckState state
+  pure accepted
 
 attemptIsAccepted :: PartitionAckState -> DeliveryAttempt -> Bool
 attemptIsAccepted partitionState attempt =

@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-10-26
+* **Update**: BUG-1 source fix implemented; broker-free regressions pass, live commit and restart gate awaits broker host access.
+
 ## 2026-09-30
 * **Update**: BUG-1 and BUG-2 are confirmed: the owning repository reproduced both on 0.9.0.1 and 0.9.1.0, and their fixes are planned in plans 16 and 17.
 * **Update**: BUG-7 links the follow-on improvement request IR-1 and the upstream-issues entry for the missing hw-kafka-client binding.

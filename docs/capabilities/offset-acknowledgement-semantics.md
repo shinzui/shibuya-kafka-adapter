@@ -3,8 +3,8 @@ title: "At-least-once offset & acknowledgement semantics"
 type: Capability
 description: "Map Shibuya ack decisions to Kafka offset store, seek-back redelivery, partition pause, and shutdown commit for at-least-once delivery."
 generated:
-  by: codex-cli/gpt-6-astra
-  at: "2026-09-20T22:30:00Z"
+  by: codex-cli/gpt-6.1-sol
+  at: "2026-10-26T19:47:42Z"
 reviews:
   - kind: model
     reviewer: process:openai-codex
@@ -30,6 +30,9 @@ interface:
 requires:
   - CAP-1
 evidence:
+  - kind: test
+    resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs
+    proves: "Broker-free source-gate hold, retry, gap, partition isolation, lifecycle wake-up, cancellation, and serial batch-timeout progress regressions."
   - kind: test
     resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/AckHandleTest.hs
     proves: "Broker-free: fixed-seed reference sequences preserve the earliest unresolved offset, duplicate callbacks are idempotent, revoked callbacks are fenced, cancellation releases both locks, seek timeouts are bounded, and exhausted ack operations throw synchronously."
@@ -60,7 +63,7 @@ monotonic token. A per-partition recovery barrier remembers the earliest
 unresolved offset and the token that requested its replay: later buffered
 callbacks cannot replace or cross it, and only a newer replay of that offset can
 clear it. Successful duplicate finalization is a no-op; a failed or cancelled
-finalization remains retryable.
+finalization remains retryable. Records polled before the seek are discarded. Replayed successors wait behind the retried record until it is resolved; if retention or compaction removed that offset, the adapter warns, abandons the missing record, and resumes at the next available offset.
 
 For rebalance visibility, allocate state with `newKafkaAdapterState`, install
 `kafkaRebalanceHandler` via `setCallback`/`rebalanceCallback` before creating the

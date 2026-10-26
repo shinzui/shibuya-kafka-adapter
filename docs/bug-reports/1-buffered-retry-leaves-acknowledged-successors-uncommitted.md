@@ -3,14 +3,16 @@ type: Bug Report
 title: Buffered retry leaves acknowledged successors uncommitted
 description: A serial consumer stays live with lag after all records return AckOk following a buffered AckRetry.
 generated:
-  by: claude-code/claude-fable-5-1
-  at: "2026-09-30T20:37:02Z"
+  by: codex-cli/gpt-6.1-sol
+  at: "2026-10-26T19:47:42Z"
 bugId: BUG-1
-status: confirmed
+status: fixed
 severity: degraded
 origin: mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime
 affects: mori://shinzui/shibuya-kafka-adapter
 affectedVersion: "0.9.0.1"
+fixedVersion: "unreleased"
+resolution: "Plan 16 retains replayed successors until retry resolution; SourceGateTest scripted retry and batch-timeout regressions store the entire log. Live commit and restart acceptance remains pending host broker access."
 environment: Redpanda 26.2.1 in a private Apple Container; macOS aarch64; GHC 9.12.4; released cohort; shibuya-core 0.9.0.3, kafka-effectful 0.3.1.0, hw-kafka-client 5.3.0.
 observed: After a first AckRetry at offset 20, all 50 records eventually return AckOk in one serial consumer, but the group commits only offset 21 and remains at lag 29 after a full auto-commit interval and graceful shutdown.
 expected: AckRetry seeks back without storing the failed offset; after its redelivery succeeds and every later record returns AckOk, the same live consumer should advance its committed position to the log end.
@@ -67,3 +69,14 @@ The cause on 0.9.1.0 is that the source filter discards the redelivered
 successors while the retry barrier is still pending, and nothing fetches them
 again once it clears. The fix is planned in
 `docs/plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md`.
+
+
+## Resolution
+
+Implemented in [plan 16](../plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md).
+The broker-free `buffered retry commits every successor (scripted log)` and
+`a record that retries twice still commits every successor (scripted log)` tests
+store offsets 0 through 11. Serial batch timeout and lifecycle wake-ups are also
+covered. The live `buffered retry commits every successor` test checks committed
+offset 12 before shutdown and after restart; live acceptance remains pending
+because the host cannot reach the shared broker (FRIC-1 in `docs/friction-log/`).

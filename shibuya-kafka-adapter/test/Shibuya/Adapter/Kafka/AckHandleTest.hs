@@ -1,4 +1,4 @@
-module Shibuya.Adapter.Kafka.AckHandleTest (tests) where
+module Shibuya.Adapter.Kafka.AckHandleTest (tests, MockState (..), defaultMockState, runFinalizer, runMockConsumer, recordAt, testConfig, finalizeRecord, assertRight) where
 
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
@@ -17,7 +17,7 @@ import Kafka.Types (BatchSize (..), KafkaError (..), PartitionId (..), Timeout (
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (kafkaRebalanceHandler)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
-import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), ingestedStream, kafkaSource, mkAckHandle, mkIngested, newKafkaAdapterState)
+import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), gateRecords, ingestedStream, kafkaSource, mkAckHandle, mkIngested, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, getAppMaster, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), HaltReason (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
@@ -41,6 +41,7 @@ data MockState = MockState
     storeFailuresRemaining :: !Int,
     pauseFailuresRemaining :: !Int,
     seekFailuresRemaining :: !Int,
+    seekBlock :: !(Maybe (MVar (), MVar ())),
     storeError :: !KafkaError,
     pauseError :: !KafkaError,
     seekError :: !KafkaError
@@ -316,7 +317,7 @@ testSourceObservesFatalSlot = do
   result <-
     runEff . runErrorNoCallStack @KafkaError . runMockConsumer mock $
       Stream.fold Fold.drain $
-        ingestedStream unreachableBuilder (kafkaSource state testConfig)
+        ingestedStream unreachableBuilder (gateRecords state (kafkaSource state testConfig))
   assertEqual "source error" (Left err) result
 
 runFinalizer ::
@@ -336,7 +337,12 @@ runMockConsumer mock =
   interpret $ \_env -> \case
     StoreOffsetMessage cr -> attemptStore mock cr.crOffset
     PausePartitions _ -> attemptPause mock
-    SeekPartitions tps seekTimeout -> recordSeek mock tps seekTimeout
+    SeekPartitions tps seekTimeout -> do
+      block <- liftIO $ (.seekBlock) <$> readIORef mock
+      liftIO $ case block of
+        Nothing -> pure ()
+        Just (started, release) -> putMVar started () >> takeMVar release
+      recordSeek mock tps seekTimeout
     PollMessage _ -> error "AckHandleTest: PollMessage not exercised"
     PollMessageBatch _ _ -> error "AckHandleTest: PollMessageBatch not exercised"
     PollMessageEither _ -> error "AckHandleTest: PollMessageEither not exercised"
@@ -447,6 +453,7 @@ defaultMockState =
       storeFailuresRemaining = 0,
       pauseFailuresRemaining = 0,
       seekFailuresRemaining = 0,
+      seekBlock = Nothing,
       storeError = KafkaResponseError RdKafkaRespErrTransport,
       pauseError = KafkaResponseError RdKafkaRespErrTransport,
       seekError = KafkaResponseError RdKafkaRespErrTransport

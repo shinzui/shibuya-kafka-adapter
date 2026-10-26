@@ -1,5 +1,6 @@
 module Shibuya.Adapter.Kafka.IntegrationTest (tests) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.STM (TChan, atomically, newTChanIO, readTChan, writeTChan)
@@ -10,11 +11,13 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS8
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (nub, sort)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Effectful (Eff, Limit (..), Persistence (..), UnliftStrategy (..), runEff, withEffToIO)
 import Effectful.Error.Static (runError)
-import Kafka.Consumer.Types (ConsumerRecord (..), OffsetCommit (..), OffsetReset (..), RebalanceEvent (..))
+import Effectful.Exception qualified as Exception
+import Kafka.Consumer.Types (ConsumerRecord (..), OffsetCommit (..), OffsetReset (..), PartitionOffset (..), RebalanceEvent (..), TopicPartition (..))
 import Kafka.Effectful.Consumer
   ( brokersList,
     groupId,
@@ -25,7 +28,7 @@ import Kafka.Effectful.Consumer
     setCallback,
     topics,
   )
-import Kafka.Effectful.Consumer.Effect (commitAllOffsets, pollMessageBatch)
+import Kafka.Effectful.Consumer.Effect (assignment, commitAllOffsets, committed, pollMessageBatch)
 import Kafka.TestEnv
   ( TestEnv (..),
     consumeN,
@@ -45,7 +48,9 @@ import Kafka.Types
   )
 import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
-import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
+import Shibuya.Adapter.Kafka.Internal (withConsumerLock)
+import Shibuya.Adapter.Kafka.SourceGateTest (afterYields, await, waitUntil)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..), Message (..))
@@ -73,6 +78,7 @@ tests =
       testCase "AckRetry is not committed past when session exits" testAckRetryAbandonedSession,
       testCase "late callback after revocation cannot advance the broker offset" testRevokedCallbackDoesNotCommit,
       testCase "actual reassignment fences a late callback from the old owner" testActualReassignmentFence,
+      testCase "buffered retry commits every successor" testBufferedRetryCommitsSuccessors,
       testCase "Handler exception redelivers instead of skipping" testHandlerExceptionRedelivery
     ]
 
@@ -548,3 +554,101 @@ awaitRevokedPartition topic events = atomically loop
             partition : _ -> pure partition
             [] -> loop
         _ -> loop
+
+-- Observe real finalization, not the handler's intended decision. The initial
+-- source handshake forces every original successor into the runner's inbox.
+testBufferedRetryCommitsSuccessors :: IO ()
+testBufferedRetryCommitsSuccessors = liveRetryScenario False False
+
+liveRetryScenario :: Bool -> Bool -> IO ()
+liveRetryScenario exactOrder throws = do
+  outcome <- timeout 60000000 $ withTestEnv $ \env -> do
+    createTopic env
+    let payloads = if throws then ["n-1", "n-2", "n-3"] else [BS8.pack ("o-" <> show n) | n <- [0 .. 11 :: Int]]
+        retryPayload = if throws then "n-2" else "o-4"
+        expected = if throws then ["n-1", "n-2", "n-2", "n-3"] else take 5 payloads <> drop 4 payloads
+        end = length payloads
+        target = [TopicPartition env.testTopic (PartitionId 0) (PartitionOffset (fromIntegral end))]
+        props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
+        sub = topics [env.testTopic] <> offsetReset Earliest
+    produceMessages env payloads
+    seen <- newIORef []
+    completed <- newIORef []
+    retried <- newIORef False
+    queued <- newEmptyMVar
+    state <- newKafkaAdapterState
+    result <- runEff . runError @KafkaError . runTracingNoop $
+      runKafkaConsumer props sub $ do
+        upstream <- kafkaAdapterWith state (testConfig env)
+        let observe ingested =
+              pure
+                ingested
+                  { ack =
+                      AckHandle
+                        ( \decision -> do
+                            let AckHandle finalize = ingested.ack
+                            finalize decision
+                            case decision of
+                              AckOk -> liftIO $ atomicModifyIORef' completed (\xs -> (xs <> [maybe "" id ingested.envelope.payload], ()))
+                              _ -> pure ()
+                        )
+                  }
+            adapter = upstream {source = afterYields end queued (Stream.mapM observe upstream.source)}
+            handler Message {envelope} = do
+              let payload = maybe "" id envelope.payload
+              liftIO $ modifyIORef' seen (<> [payload])
+              first <-
+                if payload == retryPayload
+                  then liftIO $ atomicModifyIORef' retried (\x -> (True, not x))
+                  else pure False
+              if first
+                then do
+                  liftIO $ await "initial live inbox" queued
+                  if throws then liftIO $ throwIO (userError "planned handler exception") else pure (AckRetry (RetryDelay 0))
+                else pure AckOk
+            awaitCommit remaining = do
+              offsets <- withConsumerLock state $ committed (Timeout 100) [(env.testTopic, PartitionId 0)]
+              if offsets == target
+                then pure ()
+                else
+                  if remaining <= (0 :: Int)
+                    then liftIO $ assertFailure ("committed offset did not reach log end: " <> show offsets)
+                    else liftIO (threadDelay 100000) >> awaitCommit (remaining - 1)
+        app <- runApp defaultAppConfig [(ProcessorId "live-buffered-retry", mkProcessor adapter handler)]
+        case app of
+          Left err -> liftIO $ assertFailure (show err)
+          Right handle ->
+            Exception.finally
+              ( do
+                  liftIO $ waitUntil "live successful finalizations" ((== payloads) <$> readIORef completed)
+                  awaitCommit 300
+                  drained <- stopAppGracefully defaultShutdownConfig handle
+                  liftIO $ assertEqual "successful drain" True drained
+              )
+              (stopApp handle)
+    case result of
+      Left (_, err) -> assertFailure (show err)
+      Right () -> pure ()
+    delivered <- readIORef seen
+    if exactOrder then assertEqual "handler trace" expected delivered else pure ()
+    -- A fresh assigned consumer must retain the durable end offset and stay idle.
+    restarted <- runEff . runError @KafkaError $ runKafkaConsumer props sub $ do
+      offsets <- committed (Timeout 1000) [(env.testTopic, PartitionId 0)]
+      liftIO $ assertEqual "committed after close" target offsets
+      let assigned remaining = do
+            batch <- pollMessageBatch (Timeout 100) (BatchSize 100)
+            liftIO $ assertEqual "no restart deliveries" [] [() | Right _ <- batch]
+            owned <- assignment
+            if Map.lookup env.testTopic owned == Just [PartitionId 0]
+              then pure ()
+              else
+                if remaining <= (0 :: Int)
+                  then liftIO $ assertFailure "restart assignment timed out"
+                  else assigned (remaining - 1)
+      assigned 100
+      batches <- forM [1 .. 10 :: Int] $ \_ -> pollMessageBatch (Timeout 100) (BatchSize 100)
+      liftIO $ assertEqual "assigned restart stays idle" [] [() | Right _ <- concat batches]
+    case restarted of
+      Left (_, err) -> assertFailure (show err)
+      Right () -> pure ()
+  assertEqual "bounded live session" (Just ()) outcome

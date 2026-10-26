@@ -16,6 +16,11 @@ provenance:
       at: 2026-10-26T03:49:44Z
       mode: "update"
       note: "Ground review in 0.10.0.0; strengthen wake-up and commit acceptance, correct benchmark dependencies and stale build guidance."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-26T19:42:11Z
+      mode: "implement"
+      note: "Implement source gate prerequisite for plan 17."
   reviews:
     - model: "gpt-6-astra"
       harness: "codex-cli"
@@ -75,13 +80,24 @@ which builds on the mechanism introduced here.
 - [ ] Milestone 4: publish consistent retry documentation, validated CAP-2 and BUG-1
   records, changelog notes, and the source-gate ADR.
 
-Review handoff (2026-10-25): implementation has not begun. The checkout is version
-0.10.0.0 with shibuya-core 0.11 bounds; the retry filter remains as described below.
-The 40 broker-free tests pass and all packages including benchmarks build. Live
-validation remains outstanding because the broker metadata request timed out.
+Implementation handoff (2026-10-26): source gate, all broker-free acceptance cases,
+synchronized one/two-retry runner tests, batch-timeout liveness, live commit/restart
+fixture, documentation and ADR 0002 are implemented. The broker-free suite passes
+55 tests in ten consecutive broker-free runs and all components build. Gate benchmark: 163 μs ± 8.7 μs / 1.6 MB before,
+135 μs ± 8.1 μs / 1.9 MB after (gate-only; 17% faster). Live characterization and
+ten full-suite runs remain pending: host port 9092 times out even after restarting
+the otherwise internally healthy shared broker (FRIC-1 in docs/friction-log/).
+The unchecked milestones retain those acceptance obligations.
 
 
 ## Surprises & Discoveries
+
+- 2026-10-26 (implementation): the unchanged source fails both synchronized retry
+  fixtures with a completion timeout. Restoring legacy drop semantics as a negative
+  control stores only offsets 0 through 4. The hold passes 55 broker-free tests,
+  including fatal wake-up, blocked seek, cancellation and actual batch timeout.
+  Source-gate comparison improves timing by 17%; gate-only allocation increases
+  about 0.3 MB per 10,000 records. Live broker access is blocked by FRIC-1.
 
 
 - 2026-09-30 (planning): BUG-1 was filed against Hackage 0.9.0.1. It still reproduces
@@ -228,7 +244,10 @@ validation remains outstanding because the broker metadata request timed out.
 ## Outcomes & Retrospective
 
 
-(To be filled during and after implementation.)
+Source implementation and deterministic acceptance are complete; live acceptance
+and ten full-suite repetitions remain pending host broker access. FRIC-1 remains
+logged because restarting the broker did not restore host access. The source gate
+is available as plan 17's code prerequisite, but this plan is not fully accepted.
 
 
 ## Context and Orientation

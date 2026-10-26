@@ -1,5 +1,8 @@
 # Capability catalog log
 
+## 2026-10-26
+* **Update**: CAP-2 documents replayed-successor holds, gap recovery, and deterministic source-gate evidence.
+
 ## 2026-09-20
 * **CAP-4**: Propagate exhausted store, seek, and pause operations directly as KafkaAcknowledgementException so candidate Shibuya core retains LifecycleFailed without requiring another source poll.
 * **CAP-2**: Preserve the earliest unresolved delivery with delivery-token barriers; fence callbacks by assignment generation when the rebalance helper is installed; add deterministic model, cancellation, timeout, repeated-shutdown, restart, and actual reassignment evidence.

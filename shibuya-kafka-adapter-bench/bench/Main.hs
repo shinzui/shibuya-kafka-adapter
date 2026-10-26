@@ -4,6 +4,7 @@ module Main (main) where
 
 import Control.DeepSeq (NFData)
 import Data.ByteString (ByteString)
+import Effectful (runEff)
 import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), Timestamp (..))
 import Kafka.Streamly.Stream (isFatal, skipNonFatal)
@@ -13,6 +14,7 @@ import Shibuya.Adapter.Kafka.Convert
     extractTraceHeaders,
     timestampToUTCTime,
   )
+import Shibuya.Adapter.Kafka.Internal (Polled (..), gateRecords, newKafkaAdapterState)
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
 import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, nf, nfIO)
@@ -112,6 +114,7 @@ main =
     [ envelopeBenchmarks,
       traceHeaderBenchmarks,
       timestampBenchmarks,
+      sourceGateBenchmarks,
       streamPipelineBenchmarks
     ]
 
@@ -187,3 +190,15 @@ streamPipelineBenchmarks =
   where
     eitherList10k = mkEitherStream 10000
     bareList10k = replicate 10000 sampleRecordWithHeaders
+
+-- Gate-only measurement: input construction is shared outside the measured action.
+sourceGateBenchmarks :: Benchmark
+sourceGateBenchmarks =
+  bgroup
+    "Source gate"
+    [ bench "10k records, no barrier" $ nfIO $ do
+        state <- newKafkaAdapterState
+        runEff $ Stream.fold Fold.length $ gateRecords state $ Stream.fromList records
+    ]
+  where
+    records = [Right (Polled 0 sampleRecordNoHeaders {crOffset = Offset n}) | n <- [0 .. 9999]]

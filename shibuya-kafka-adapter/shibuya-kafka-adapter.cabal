@@ -101,11 +101,13 @@ test-suite shibuya-kafka-adapter-test
     QuasiQuotes
 
   other-modules:
+    Kafka.ScriptedLog
     Kafka.TestEnv
     Shibuya.Adapter.Kafka.AckHandleTest
     Shibuya.Adapter.Kafka.AdapterTest
     Shibuya.Adapter.Kafka.ConvertTest
     Shibuya.Adapter.Kafka.IntegrationTest
+    Shibuya.Adapter.Kafka.SourceGateTest
 
   build-depends:
     async ^>=2.2,
