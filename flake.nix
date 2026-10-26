@@ -64,6 +64,7 @@
           ./nix/haskell.nix
           ./nix/treefmt.nix
           ./nix/pre-commit.nix
+          ./nix/redpanda.nix
         ]
         # Your project-specific customizations. seihou never generates, touches,
         # or migrates this file, so it is the conflict-free place to extend.

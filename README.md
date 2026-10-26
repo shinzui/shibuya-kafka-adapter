@@ -35,6 +35,7 @@ The repo ships a Nix flake and `direnv` config for a reproducible toolchain.
 ```sh
 direnv allow        # or: nix develop
 cabal build all
+redpanda-local-up   # Apple Silicon macOS; project-local broker
 cabal test shibuya-kafka-adapter
 ```
 
@@ -47,7 +48,23 @@ cabal run BasicConsumer
 
 ## Development
 
-Common development tasks are available as `just` recipes. Run `just` (with no arguments) for the full list. The usual flow is `just process-up` in one shell (starts Redpanda via process-compose), `just create-topics`, then `just test` or `just bench` or `cabal run <example>`.
+Common development tasks are available as `just` recipes. Run `just` (with no arguments) for the full list. For tests on Apple Silicon macOS, run `just redpanda-up`, then `just test`.
+The `nix.redpanda` setting supplies `redpanda-local-{up,down,status,logs,purge}`
+commands. The private broker is named `shibuya-kafka-adapter-rp-0` and listens on
+`127.0.0.1:29092`; its Admin API uses port `29644`. Its names and ports are
+separate from the shared cluster. `just redpanda-down` stops it and preserves data.
+
+The Nix shell defaults `KAFKA_TEST_BROKER` to `127.0.0.1:29092`. Tests use that
+endpoint for both clients and topic creation. Override it explicitly to test
+another broker, for example
+`KAFKA_TEST_BROKER=127.0.0.1:9092 cabal test shibuya-kafka-adapter`.
+Outside the Nix shell, the test helper retains the shared-broker default at
+`127.0.0.1:9092`. Other platforms can select any reachable Kafka-compatible broker
+through the same variable.
+
+`just process-up` also starts the private broker and the configured Jaeger process.
+The example topic recipes and examples retain their existing Kafka configuration;
+set their broker endpoint separately when using them with the private cluster.
 
 ## Notes
 

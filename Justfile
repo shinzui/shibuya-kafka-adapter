@@ -7,7 +7,7 @@ default:
 
 # --- Services ---
 
-# Start Redpanda via process-compose (runs in foreground; Ctrl-C to stop)
+# Start development services via process-compose (Ctrl-C to stop)
 [group("services")]
 process-up:
     process-compose --tui=false --unix-socket .dev/process-compose.sock up
@@ -27,6 +27,21 @@ jaeger-ui:
 jaeger-logs:
     process-compose --unix-socket .dev/process-compose.sock process logs jaeger -f
 
+
+# Start this project's private Redpanda cluster (Apple Silicon macOS)
+[group("services")]
+redpanda-up:
+    redpanda-local-up
+
+# Stop this project's private broker, preserving its data
+[group("services")]
+redpanda-down:
+    redpanda-local-down
+
+# Inspect this project's private broker
+[group("services")]
+redpanda-status:
+    redpanda-local-status
 
 # --- Kafka (rpk) ---
 
@@ -56,7 +71,7 @@ list-topics:
 build:
     cabal build all
 
-# Run the library test suite (requires process-up in another shell)
+# Run the library test suite (start the broker with just redpanda-up)
 [group("build")]
 test:
     cabal test shibuya-kafka-adapter

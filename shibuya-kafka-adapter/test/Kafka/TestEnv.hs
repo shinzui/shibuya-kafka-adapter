@@ -61,7 +61,8 @@ import Shibuya.Core.Ingested (Ingested (..))
 import Shibuya.Core.Types (Envelope (..))
 import Streamly.Data.Fold qualified as Fold
 import Streamly.Data.Stream qualified as Stream
-import System.Process (callCommand)
+import System.Environment (lookupEnv)
+import System.Process (callProcess)
 import System.Random (randomRIO)
 
 -- | Test environment with isolated topic and group.
@@ -76,9 +77,10 @@ data TestEnv = TestEnv
 withTestEnv :: (TestEnv -> IO a) -> IO a
 withTestEnv f = do
   prefix <- randomPrefix
+  broker <- maybe "127.0.0.1:9092" Text.pack <$> lookupEnv "KAFKA_TEST_BROKER"
   let env =
         TestEnv
-          { testBroker = BrokerAddress "127.0.0.1:9092",
+          { testBroker = BrokerAddress broker,
             testTopic = TopicName (Text.pack (prefix <> "-topic")),
             testGroupId = ConsumerGroupId (Text.pack (prefix <> "-group")),
             testPrefix = prefix
@@ -98,12 +100,16 @@ createTopic env = createTopicWithPartitions env 1
 -- | Create a topic with the specified number of partitions via rpk.
 createTopicWithPartitions :: TestEnv -> Int -> IO ()
 createTopicWithPartitions env n =
-  callCommand $
-    "rpk topic create "
-      <> Text.unpack (unTopicName env.testTopic)
-      <> " -p "
-      <> show n
-      <> " 2>/dev/null || true"
+  callProcess
+    "rpk"
+    [ "topic",
+      "create",
+      Text.unpack (unTopicName env.testTopic),
+      "-p",
+      show n,
+      "-X",
+      "brokers=" <> Text.unpack (unBrokerAddress env.testBroker)
+    ]
 
 -- | Build consumer properties for testing.
 mkConsumerProps :: TestEnv -> ConsumerProperties

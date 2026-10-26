@@ -7,29 +7,11 @@
 
 version: "0.5"
 processes:
-  # Redpanda is NOT started here. This machine runs one shared, always-on cluster
-  # on Apple Container, managed by home/redpanda.nix in the dotfiles repository --
-  # see its docs/redpanda.md. This process only checks the shared cluster is
-  # reachable and exits, so a missing cluster fails here with the fix rather than
-  # surfacing as a connection error deeper in. It deliberately does NOT stop or
-  # purge anything on shutdown: the cluster is shared with every other project on
-  # this machine.
+  # Project-local lifecycle scripts use a private container and port block.
+  # The broker remains available after process-compose exits; stop it explicitly
+  # with `just redpanda-down` to preserve its data.
   redpanda:
-    command: |
-      if rpk cluster info -X brokers=127.0.0.1:9092 >/dev/null 2>&1; then
-        echo "Shared Redpanda is reachable at 127.0.0.1:9092."
-      else
-        echo "The shared Redpanda cluster is not running." >&2
-        echo "" >&2
-        echo "Start it with:" >&2
-        echo "" >&2
-        echo "    redpanda-up" >&2
-        echo "" >&2
-        echo "If that reports the Apple Container service is down:" >&2
-        echo "" >&2
-        echo "    container system start && redpanda-up" >&2
-        exit 1
-      fi
+    command: redpanda-local-up
     availability:
       restart: "no"
 

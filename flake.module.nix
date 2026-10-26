@@ -12,6 +12,11 @@
     # directly in nix/haskell.nix; relocated here so the managed file stays
     # pristine across upgrades.
     haskellProject.extraDevPackages = [ pkgs.rdkafka ];
+    # Match the project-local broker configured by nix-haskell-flake. Preserve
+    # an explicit endpoint when testing against another Kafka cluster.
+    haskellProject.shellHook = ''
+      export KAFKA_TEST_BROKER="''${KAFKA_TEST_BROKER:-127.0.0.1:29092}"
+    '';
 
     # The repository is a multi-package Cabal project, while the published
     # default output is the adapter library. Pin the fast-moving project
