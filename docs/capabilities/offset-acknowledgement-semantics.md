@@ -4,7 +4,7 @@ type: Capability
 description: "Map Shibuya ack decisions to Kafka offset store, seek-back redelivery, partition pause, and shutdown commit for at-least-once delivery."
 generated:
   by: codex-cli/gpt-6.1-sol
-  at: "2026-10-26T19:47:42Z"
+  at: "2026-10-26T19:55:34Z"
 reviews:
   - kind: model
     reviewer: process:openai-codex
@@ -31,8 +31,11 @@ requires:
   - CAP-1
 evidence:
   - kind: test
+    resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/DeliveryStatusTest.hs
+    proves: "Current/superseded status across retry, token floor, partition isolation, revoke/reassign and missing-offset recovery."
+  - kind: test
     resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs
-    proves: "Broker-free source-gate hold, retry, gap, partition isolation, lifecycle wake-up, cancellation, and serial batch-timeout progress regressions."
+    proves: "Broker-free synchronized tests a retried record blocks its successors and a twice-retried record blocks its successors assert exact serial handler order; also covers holds, lifecycle wake-ups, cancellation, gaps and batch timeout."
   - kind: test
     resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/AckHandleTest.hs
     proves: "Broker-free: fixed-seed reference sequences preserve the earliest unresolved offset, duplicate callbacks are idempotent, revoked callbacks are fenced, cancellation releases both locks, seek timeouts are bounded, and exhausted ack operations throw synchronously."
@@ -71,6 +74,10 @@ consumer, and pass the same state to `kafkaAdapterWith`. The callback tracks an
 assignment generation and fences store, seek, and pause callbacks retained by a
 revoked owner. This fence is opt-in because `kafka-effectful` requires callbacks
 to be installed before consumer creation.
+
+Under serial single-message processing, already-buffered successors are skipped before handler entry and redelivered after the retried record resolves. This preserves partition handler order, subject to the missing-offset recovery policy. A retry cannot undo successors already admitted in the same batch; later superseded batches are skipped. Concurrent processing is unsupported and can admit a successor before the retry is recorded.
+
+With the rebalance helper installed, deliveries already revoked when their status is checked are skipped before handler entry. A revocation after that admission check cannot cancel an admitted handler.
 
 ## Limits
 

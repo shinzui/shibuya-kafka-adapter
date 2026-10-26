@@ -3,14 +3,16 @@ type: Bug Report
 title: Buffered successors execute before a retried record
 description: A serial adapter processes buffered successor handlers before it redelivers an earlier failed offset.
 generated:
-  by: claude-code/claude-fable-5-1
-  at: "2026-09-30T20:37:02Z"
+  by: codex-cli/gpt-6.1-sol
+  at: "2026-10-26T19:55:34Z"
 bugId: BUG-2
-status: confirmed
+status: fixed
 severity: degraded
 origin: mori://shinzui/keiro-runtime-kenshou/masterplans/1-build-an-extensive-verification-suite-for-the-keiro-runtime
 affects: mori://shinzui/shibuya-kafka-adapter
 affectedVersion: "0.9.0.1"
+fixedVersion: "unreleased"
+resolution: "Plan 17 adds core delivery admission and Kafka retry-barrier status. Synchronized one/two-retry scripted tests assert exact handler order; live ordering acceptance awaits host broker access."
 environment: Redpanda 26.2.1 in a private Apple Container; macOS aarch64; GHC 9.12.4; released cohort with Hackage shibuya-kafka-adapter 0.9.0.1, shibuya-core 0.9.0.3, kafka-effectful 0.3.1.0, and hw-kafka-client 5.3.0.
 observed: Offset 3 first returns AckRetry; handlers at offsets 4 through 9 return AckOk before offset 3 is redelivered and succeeds, despite serial processor execution.
 expected: A retry of offset 3 should keep same-partition successor handlers from executing until offset 3 has been redelivered and finalized successfully.
@@ -64,3 +66,19 @@ the adapter has no way to recall them. The fix is planned in
 `docs/plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md`,
 which adds a delivery-status check to `shibuya-core` that the runner asks before
 each handler, and builds on plan 16.
+
+
+## Resolution
+
+[Plan 17](../plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md)
+adds a handler-time delivery-status check. The synchronized tests
+`a retried record blocks its successors (scripted log)` and
+`a twice-retried record blocks its successors (scripted log)` require the retried
+record to resolve before any successor handler runs, and store the entire log.
+The `Delivery status` group covers the predicate and token/generation fences.
+The live test `a retried record blocks its successors` and rewritten handler
+exception test verify successful finalization and exact order before graceful
+shutdown. Live acceptance remains pending host broker access (FRIC-1 in
+`docs/friction-log/`). The guarantee is limited to serial single-message
+processing; same-batch admission and revocation races retain their documented
+limits. The build needs the unreleased core 0.12.0.0 candidate.

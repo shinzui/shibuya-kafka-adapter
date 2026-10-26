@@ -37,8 +37,8 @@ tests :: TestTree
 tests =
   testGroup
     "Source gate"
-    [ testCase "buffered retry commits every successor (scripted log)" (scriptedRetry 1),
-      testCase "a record that retries twice still commits every successor (scripted log)" (scriptedRetry 2),
+    [ testCase "a retried record blocks its successors (scripted log)" (scriptedRetry 1),
+      testCase "a twice-retried record blocks its successors (scripted log)" (scriptedRetry 2),
       testCase "pre-seek successors are dropped" testStale,
       testCase "replay holds successor until success" (testHold "ok"),
       testCase "retry drops held successor" (testHold "retry"),
@@ -117,6 +117,7 @@ scriptedRetry retries = do
   stores <- readIORef scripted.stored
   seeks <- readIORef scripted.seeks
   assertEqual ("completion; deliveries=" <> show observed <> "; stored=" <> show stores) (Just (Right ())) outcome
+  assertEqual "handler order" ([0 .. 4] <> replicate (retries - 1) 4 <> [4 .. 11]) observed
   assertEqual "stored offsets" [0 .. 11] stores
   assertEqual "seeks" (replicate retries 4) seeks
 

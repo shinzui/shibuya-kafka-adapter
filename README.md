@@ -12,6 +12,8 @@ Offset reset policy belongs to the `Subscription` passed to `runKafkaConsumer`, 
 
 `AckRetry` preserves the earliest unresolved delivery for the partition, seeks back to that offset, and does not store it. Later buffered callbacks cannot replace or cross that recovery boundary; only a newer replay of the boundary delivery can resolve it. Records polled before the seek are discarded. Replayed successors wait behind the retried record until it is resolved; if retention or compaction removed that offset, the adapter warns, abandons the missing record, and resumes at the next available offset. `AckDeadLetter` stores the offset so the consumer group moves on, prints `[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED` to stderr, and makes the message unrecoverable from the group's committed position. This adapter does not include a DLQ producer.
 
+Under serial single-message processing, already-buffered successors are skipped before handler entry and redelivered after the retried record resolves. This preserves partition handler order, subject to the missing-offset recovery policy. A retry cannot undo successors already admitted in the same batch; later superseded batches are skipped. Concurrent processing is unsupported and can admit a successor before the retry is recorded.
+
 Kafka does not expose a per-message delivery-attempt counter through this consumer API, so `Envelope.attempt` is always `Nothing`. Handlers that need bounded retries must use their own store or return `AckHalt` to stop the stream.
 
 `AckHalt` pauses the originating partition and stops the processor. Polling then stops; after `max.poll.interval.ms` (librdkafka default: 300000 ms, or 5 minutes) the broker may evict this consumer and rebalance the partition to another group member. A single-member group stalls until restart.
@@ -66,3 +68,11 @@ mori.dhall                        project manifest (mori registry)
 ## License
 
 MIT. See package cabal files for details.
+
+
+With `kafkaRebalanceHandler` installed, deliveries already revoked when their status is checked are skipped before handler entry. A revocation after that admission check cannot cancel an admitted handler.
+
+
+The unreleased adapter requires `shibuya-core ^>=0.12.0.0`. Until that core
+release is published, use a local `cabal.project.local` package entry for its
+candidate checkout, as described in [plan 17](docs/plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md).

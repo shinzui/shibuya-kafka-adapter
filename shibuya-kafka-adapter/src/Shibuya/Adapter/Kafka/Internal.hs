@@ -357,6 +357,16 @@ mkAckHandle ::
   Eff es (AckHandle es)
 mkAckHandle state config cr = do
   attempt <- Effectful.liftIO $ registerDelivery state cr
+  ackHandleFor state config attempt cr
+
+ackHandleFor ::
+  (KafkaConsumer :> es, Error KafkaError :> es, IOE :> es) =>
+  KafkaAdapterState ->
+  KafkaAdapterConfig ->
+  DeliveryAttempt ->
+  ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
+  Eff es (AckHandle es)
+ackHandleFor state config attempt cr = do
   finalizerLock <- Effectful.liftIO $ newMVar ()
   completed <- Effectful.liftIO $ newIORef False
   pure $ AckHandle $ \decision ->
@@ -562,11 +572,26 @@ mkIngested ::
   ConsumerRecord (Maybe ByteString) (Maybe ByteString) ->
   Eff es (Ingested es (Maybe ByteString))
 mkIngested state config cr = do
-  ackHandle <- mkAckHandle state config cr
-  pure $
-    Core.mkIngested
-      (consumerRecordToEnvelope cr)
-      ackHandle
+  attempt <- Effectful.liftIO $ registerDelivery state cr
+  ackHandle <- ackHandleFor state config attempt cr
+  pure
+    (Core.mkIngested (consumerRecordToEnvelope cr) ackHandle)
+      { Core.deliveryStatus = Effectful.liftIO (deliveryStatusOf state attempt)
+      }
+
+-- Admission is a single ledger read, independent of consumer-lock ownership.
+-- A current answer cannot cancel a later revoke or concurrent retry.
+deliveryStatusOf :: KafkaAdapterState -> DeliveryAttempt -> IO Core.DeliveryStatus
+deliveryStatusOf state attempt = do
+  ledger <- readIORef state.ackState
+  let partition = Map.findWithDefault initialPartitionAckState attempt.partition ledger.partitions
+      current =
+        attemptIsAccepted partition attempt && case partition.barrier of
+          Nothing -> True
+          Just barrier ->
+            attempt.recordOffset < barrier.offset
+              || (attempt.recordOffset == barrier.offset && attempt.token > barrier.retryToken)
+  pure $ if current then Core.DeliveryCurrent else Core.DeliverySuperseded
 
 -- | Transform a poll stream of @Either KafkaError ConsumerRecord@ into a
 -- stream of 'Ingested'.

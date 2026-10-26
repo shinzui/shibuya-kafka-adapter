@@ -1,6 +1,7 @@
 # Capability catalog log
 
 ## 2026-10-26
+* **Update**: CAP-2 states serial retry ordering and admission limits with synchronized status and ordering evidence.
 * **Update**: CAP-2 documents replayed-successor holds, gap recovery, and deterministic source-gate evidence.
 
 ## 2026-09-20

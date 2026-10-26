@@ -36,11 +36,16 @@
 --    buffered callbacks cannot replace or commit past that recovery boundary.
 --    Pre-seek records are discarded; replayed successors wait until the retry
 --    resolves. A missing retry offset is abandoned with a warning.
+--    A serial single-message runner skips already-buffered successors before
+--    handler entry and redelivers them after the retry. Same-batch successors
+--    have already been admitted together; concurrent admission has no such
+--    ordering guarantee.
 -- 5. On @AckDeadLetter@, the offset is stored after a loud stderr warning.
 -- 6. On @AckHalt@, the partition is paused and offset is not stored.
 --
 -- == Serial Operation Required
 --
+-- Under serial single-message processing a retried record blocks its successors.
 -- This adapter must be run with serial message processing. librdkafka stores the
 -- highest offset per partition without gap tracking, so concurrent finalization
 -- can commit past an earlier message that failed, halted, or requested retry.
@@ -84,6 +89,9 @@
 -- the current consumer.
 --
 -- == Rebalance Callback Helper
+--
+-- With the helper installed, deliveries already revoked at the admission check
+-- are skipped. Revocation after the check cannot cancel an admitted handler.
 --
 -- 'kafkaRebalanceHandler' is optional. Install it with
 -- @Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))@

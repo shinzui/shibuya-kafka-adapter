@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- Require `shibuya-core ^>=0.12.0.0`, whose delivery-status contract lets the
+  runner skip superseded deliveries. Until it is published, builds need the
+  local candidate override documented in plan 17; do not release the adapter.
+
 ### Bug Fixes
+
+- Under serial single-message processing, skip buffered successors before
+  handler entry until the retried record resolves. Same-batch work already
+  admitted together and later revocation races retain their documented limits.
 
 - Retain replayed successors behind a pending retry so successful processing
   advances stored offsets to the log end without a restart. Missing retry offsets

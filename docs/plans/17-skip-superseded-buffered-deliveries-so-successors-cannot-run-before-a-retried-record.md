@@ -16,6 +16,11 @@ provenance:
       at: 2026-10-26T19:08:58Z
       mode: "update"
       note: "Correct published-version collision and batch-worker bypass; preserve detailed metrics and strengthen synchronized ordering and finalization acceptance."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-26T19:42:11Z
+      mode: "implement"
+      note: "Begin implementation by verifying and completing the missing plan 16 prerequisite."
   reviews:
     - model: "gpt-6-astra"
       harness: "codex-cli"
@@ -62,8 +67,7 @@ from the retry state it already keeps.
 You can see it working with a broker-free test that drives the real adapter and the
 real runner over an in-memory log of twelve records and retries offset 4 once. The
 handler must see offsets `0,1,2,3,4,4,5,6,7,8,9,10,11`. With plan 16 alone and
-the synchronized buffered schedule below it sees `0..11, 4, 5..11`. The currently
-checked-out adapter predates plan 16. A live Redpanda test must show the fixed order.
+the synchronized buffered schedule below it sees `0..11, 4, 5..11`. The adapter predated plan 16 at the start of implementation. A live Redpanda test must show the fixed order.
 
 This plan changes two repositories: this one, and `shibuya-core` in
 `mori://shinzui/shibuya`, which on this machine is the sibling checkout
@@ -75,32 +79,67 @@ which must be implemented first.
 ## Progress
 
 
-- [ ] Milestone 0: plan 16's source gate and acceptance are complete; establish the
-  current core/adapter test and benchmark baselines and verify release versions.
-- [ ] Milestone 1: both actual runner paths skip superseded deliveries, preserve
-  metrics and lifecycle behavior, and pass deterministic core regression tests.
-- [ ] Milestone 2: record the core benchmark comparison and prepare the documented,
-  tested 0.12.0.0 core/metrics candidate without publishing it.
-- [ ] Milestone 3: the adapter builds against the local candidate and passes status,
-  synchronized retry-order, batch-liveness, and handler-exception tests.
-- [ ] Milestone 4: ten full-suite runs and all-component builds pass; documentation,
-  capability and bug records, and ADRs reflect the verified behavior.
-- [ ] Milestone 5: after the owner publishes the feature-bearing core release,
-  remove only this plan's local override and verify the Hackage build and tests.
+- [ ] Milestone 0: source prerequisite and baselines are verified, but plan 16's
+  live commit/restart acceptance remains blocked by host broker access.
+- [x] Milestone 1 (2026-10-26): both actual runner paths skip superseded
+  deliveries. Core suite: 304 examples, zero failures, including single/batch
+  lifecycle failures, once-only status sampling, basic/detailed ownership,
+  cursor accounting and the superseded trace event.
+- [ ] Milestone 2: core/metrics 0.12.0.0 candidates are implemented and tested
+  (304 core examples, both GC suites, 104 metrics examples; all components build).
+  All 62 benchmark timing checks pass; the allocation gate is unmet pending
+  an owner decision on the measured increase recorded below.
+- [ ] Milestone 3: local-candidate adapter passes 59 broker-free tests, including
+  status, exact one/two-retry order and batch timeout; live ordering and rewritten
+  handler-exception acceptance remain blocked by broker host access.
+- [ ] Milestone 4: documentation, ADRs, CAP-2 and BUG-2 are updated and validated;
+  all components build and ten broker-free repetitions pass. Ten full-suite runs
+  remain pending broker access.
+- [ ] Milestone 5: owner publication of the feature-bearing core is pending;
+  preserve this plan's ignored local override until Hackage validation is possible.
 
-Review handoff (2026-10-26): this is a plan revision, not implementation. Plan 16 is
-still unimplemented: `dropStaleRecords` exists, while `gateRecords`,
-`Kafka/ScriptedLog.hs`, and `SourceGateTest.hs` do not. Both repositories started
-clean. The adapter is 0.10.0.0 and already requires core 0.11.0.0. Core and metrics
-0.11.0.0 are published, but neither the checked-out nor tagged core has
-`deliveryStatus`. The next candidate in this plan is therefore 0.12.0.0; recheck
-Hackage and upstream tags before implementation if releases have advanced.
-Review validation passed: 40 broker-free adapter tests and 289 core examples, zero
-failures. No feature implementation, benchmarks, or live-broker tests were run in
-this review; those remain milestone acceptance. Capability and strict bug-report
-OKF validation passed, as did plan structure, fence, link, and whitespace checks.
+Implementation handoff (2026-10-26): starting adapter HEAD was
+`b15d8417806edae6f41a34575831216dcae4df79`; core HEAD was
+`a4b2b8e3e876f550b7fa08fb8d5a94975a0cc9da`. Core baseline was 289 passing examples
+and the existing 62-leaf benchmark on that unchanged HEAD. Hackage preferred
+versions and upstream tags both ended at 0.11.0.0, which lacks the status API.
+Plan 16's source prerequisite was committed as `49788ef`; it passes 55 broker-free
+tests in ten runs but retains its live acceptance obligations. FRIC-1 in
+`docs/friction-log/` records the host/container networking block.
+
+The ignored `cabal.project.local` was absent before this session and now contains
+only the documented local core package entry. The solver reports
+`shibuya-core-0.12.0.0`, `style: local`, from the sibling checkout. For Milestone 5,
+remove this file only if its contents are still solely this plan's override;
+otherwise remove only the package entry and preserve subsequent user settings.
+Core candidate commit: `e21e823462cc14a4471eedb159354d22704a554f` in
+`mori://shinzui/shibuya`. No package was tagged, published or released.
+
 
 ## Surprises & Discoveries
+
+- 2026-10-26 (implementation): all 62 core timing comparisons pass the existing
+  ten-percent threshold, while allocation increases. The mandatory record field
+  adds one heap word: the 10,000-record adapter-construction workload increases
+  from 15,017,797 to 15,097,742 bytes (about 8 bytes per record). The existing
+  10,000-message processing workload increases from 22,517,314 to 22,756,035 bytes
+  (about 24 bytes per message), with time 3.565 ms to 3.659 ms. Serial hot-path
+  time changes from 9.274 ms to 8.544 ms and allocation 19,677,469 to 19,910,104 bytes;
+  Async 8 changes from 34.229 ms to 32.294 ms and 37,872,309 to 37,899,847 bytes.
+  The new record field itself prevents zero construction-allocation growth under
+  this representation; the owner has been asked whether to accept the measured
+  cost. No allocation waiver has been inferred, and Milestone 2 stays unchecked.
+
+- 2026-10-26 (implementation): forced-current negative control retains plan 16 and
+  produces `[0..11] <> [4..11]` for one retry and
+  `[0..11] <> [4] <> [4..11]` for two. Restoring the predicate passes both exact-order
+  tests. The handshake establishes that all original successors entered the inbox.
+
+- 2026-10-26 (implementation): host Redpanda metadata times out although internal
+  container metadata succeeds; restarting only the shared broker did not restore
+  host access (FRIC-1). A live producer's native cleanup also outlived the fixture
+  timeout and SIGTERM, requiring an external watchdog (FRIC-2). No live acceptance
+  or ten-full-suite result is claimed.
 
 
 - 2026-09-30 (planning): BUG-2 was filed against Hackage 0.9.0.1 and still reproduces
@@ -164,6 +203,14 @@ OKF validation passed, as did plan structure, fence, link, and whitespace checks
   the completion boundary.
 
 ## Decision Log
+
+- Decision: develop the core admission check after plan 16's source and broker-free
+  acceptance are implemented, retaining all live acceptance gates as unfinished.
+  Rationale: the shared broker answers inside its container but host metadata times
+  out even after restart (FRIC-1 in docs/friction-log/). Independent core and adapter
+  implementation can proceed without declaring either plan accepted; no live or
+  ten-full-suite requirement is waived.
+  Date: 2026-10-26
 
 
 - Decision: fix BUG-2 with a pre-handler check in `shibuya-core`, not with lock-step
@@ -242,7 +289,34 @@ OKF validation passed, as did plan structure, fence, link, and whitespace checks
 ## Outcomes & Retrospective
 
 
-(To be filled during and after implementation.)
+The implementation spans the core 0.12.0.0 candidate and the Kafka adapter.
+Synchronized scripted runner tests pass exact traces
+`[0,1,2,3,4,4,5,6,7,8,9,10,11]` and
+`[0,1,2,3,4,4,4,5,6,7,8,9,10,11]`, with all offsets stored. Forcing only the
+adapter status action to return current fails both order assertions and restores
+the historical successor-before-retry traces. The actual action is restored.
+Core/metrics and all-component build results are recorded in Progress. Source-gate
+comparison against the fresh post-plan-16 baseline is 150 μs ± 14 μs before and
+132 μs ± 10 μs after, about 12% faster, with approximately 1.9 MB gate-only allocation
+on both runs.
+
+The plan is not fully accepted. Live ordering/handler-exception checks and ten
+full-suite runs require restored host broker access. The core allocation budget
+also remains unmet unless the owner explicitly accepts the measured cost; the
+62 timing passes do not waive that budget. Milestone 5 waits for owner publication.
+FRIC-1 remains logged under plan 16 for broker access. FRIC-2 in
+`docs/friction-log/` records native producer cleanup outliving an in-process timeout;
+new live setup bounds message expiration and the attempted live run uses an external
+watchdog. The attempted final live run was killed by that watchdog at 55 seconds
+while producer API-version queries still reset. FRIC-2 remains logged because
+the underlying cleanup limitation is unresolved; these broker-unavailable attempts
+provide no live correctness evidence.
+
+ADR 0003 records the adapter predicate and limits; the core's new ADR at
+`mori://shinzui/shibuya`, project-relative
+`docs/adr/0013-let-adapters-supersede-a-delivery-before-its-handler-runs.md`
+(artifact-level URI pending), records the admission contract. No broader benchmark
+tooling or calibration was introduced.
 
 
 ## Context and Orientation
@@ -303,9 +377,9 @@ accepted. `attemptIsAccepted` is the existing predicate that checks assignment,
 generation, and `validFromToken`. This design is recorded in
 [`docs/adr/0001-fence-acknowledgements-by-delivery-and-assignment.md`](../adr/0001-fence-acknowledgements-by-delivery-and-assignment.md).
 
-Plan 16 will add the source gate, `gateRecords`, in the same module. It drops records
+Plan 16 added the source gate, `gateRecords`, in the same module. It drops records
 polled before a retry seek and holds records delivered again after the seek until the
-barrier is resolved. Plan 16 will also create an ADR in `docs/adr/` whose file name ends
+barrier is resolved. Plan 16 also created an ADR in `docs/adr/` whose file name ends
 in `hold-replayed-records-behind-a-pending-retry.md`, the broker-free log
 in `shibuya-kafka-adapter/test/Kafka/ScriptedLog.hs`, and the test module
 `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs`. Both ADRs are
@@ -437,9 +511,9 @@ only on checkboxes. Confirm that
 `gateRecords` is exported from
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs` and that the adapter
 suite passes. Plan 16 is a prerequisite for implementation, not for this review.
-If it remains incomplete, report that prerequisite and do not silently implement a
-second plan under a review/update request. For implementation, obtain completion
-of plan 16 before proceeding. After plan 16, capture its existing `Source gate`
+If its source remains incomplete, implement and validate that prerequisite first.
+The 2026-10-26 execution decision permits independent core work while the shared
+broker blocks live prerequisite acceptance; retain all unchecked live gates. After plan 16, capture its existing `Source gate`
 benchmark baseline before changing the core dependency, using the commands in
 that plan; capture the core baseline before Milestone 1 as shown below. Inspect both working trees and preserve unrelated
 changes; do not reset them to satisfy a cleanliness check. Record both HEADs and
@@ -862,7 +936,7 @@ not the current baseline.
 Run all core suites and the metrics suite before committing.
 
 ```bash
-nix develop -c bash -c "cabal build all --enable-benchmarks && cabal test shibuya-core && cabal test shibuya-metrics"
+nix develop -c bash -c "cabal build all --enable-benchmarks && cabal test shibuya-core --enable-tests && cabal test shibuya-metrics --enable-tests"
 ```
 
 Compare against the baseline after Milestone 1.
@@ -1104,3 +1178,11 @@ already-published core, moved batch admission to the shared worker, preserved
 detailed metrics ownership, replaced double status reads and scheduling assumptions,
 and strengthened finalization-based completion and recovery instructions. Prototype
 results remain historical; implementation and live acceptance remain outstanding.
+
+
+Revision note (2026-10-26, implementation): implemented the source prerequisite and
+both repositories, retained broker-blocked live gates, recorded exact negative
+controls and measured allocation growth, and prepared the local 0.12.0.0 candidate.
+Cabal's candidate solver needed explicit `--enable-tests` for the final package-wide
+test commands. Performance acceptance awaits an explicit allocation-budget decision;
+no new benchmark tooling, profiles or calibration was added.

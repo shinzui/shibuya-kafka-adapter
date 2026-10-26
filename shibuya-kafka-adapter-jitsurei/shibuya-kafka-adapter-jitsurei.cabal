@@ -47,7 +47,7 @@ common common-deps
     hw-kafka-client,
     kafka-effectful ^>=0.3.1.0,
     process,
-    shibuya-core ^>=0.11.0.0,
+    shibuya-core ^>=0.12.0.0,
     shibuya-kafka-adapter,
     streamly,
     streamly-core,

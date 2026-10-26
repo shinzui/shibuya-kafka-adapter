@@ -36,6 +36,7 @@ import Kafka.TestEnv
     createTopicWithPartitions,
     produceKeyedMessages,
     produceMessages,
+    produceMessagesBounded,
     producePartitionMessages,
     withTestEnv,
   )
@@ -50,7 +51,7 @@ import Shibuya.Adapter (Adapter (..))
 import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.Adapter.Kafka.Internal (withConsumerLock)
 import Shibuya.Adapter.Kafka.SourceGateTest (afterYields, await, waitUntil)
-import Shibuya.App (ProcessorId (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully, waitApp)
+import Shibuya.App (ProcessorId (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully)
 import Shibuya.Core.Ack (AckDecision (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..), Message (..))
@@ -78,6 +79,7 @@ tests =
       testCase "AckRetry is not committed past when session exits" testAckRetryAbandonedSession,
       testCase "late callback after revocation cannot advance the broker offset" testRevokedCallbackDoesNotCommit,
       testCase "actual reassignment fences a late callback from the old owner" testActualReassignmentFence,
+      testCase "a retried record blocks its successors" (liveRetryScenario True False),
       testCase "buffered retry commits every successor" testBufferedRetryCommitsSuccessors,
       testCase "Handler exception redelivers instead of skipping" testHandlerExceptionRedelivery
     ]
@@ -472,40 +474,7 @@ testActualReassignmentFence = withTestEnv $ \env -> do
       (expected `elem` replayed)
 
 testHandlerExceptionRedelivery :: IO ()
-testHandlerExceptionRedelivery = withTestEnv $ \env -> do
-  createTopic env
-  let payloads = ["n-1", "n-2", "n-3"]
-  produceMessages env payloads
-
-  thrown <- newIORef False
-  seen <- newIORef ([] :: [ByteString])
-  result <- runEff . runError @KafkaError . runTracingNoop $ do
-    let props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
-        sub = topics [env.testTopic] <> offsetReset Earliest
-    runKafkaConsumer props sub $ do
-      upstream <- kafkaAdapter (testConfig env)
-      let finiteAdapter = upstream {source = Stream.take 4 upstream.source}
-          handler Message {envelope} = do
-            let payload = maybe "" id envelope.payload
-            liftIO $ modifyIORef' seen (payload :)
-            hasThrown <- liftIO $ readIORef thrown
-            if payload == "n-2" && not hasThrown
-              then liftIO $ do
-                writeIORef thrown True
-                throwIO (userError "planned handler exception")
-              else pure AckOk
-      appResult <- runApp defaultAppConfig [(ProcessorId "handler-exception", mkProcessor finiteAdapter handler)]
-      case appResult of
-        Left appErr -> liftIO $ assertFailure $ "runApp failed: " <> show appErr
-        Right appHandle -> waitApp appHandle
-      commitAllOffsets OffsetCommit
-  case result of
-    Left (_cs, err) -> assertFailure $ "handler exception scenario failed: " <> show err
-    Right () -> pure ()
-
-  delivered <- reverse <$> readIORef seen
-  assertBool ("expected n-2 at least twice, saw " <> show delivered) (countPayload "n-2" delivered >= 2)
-  assertBool ("expected n-3 after handler exception retry, saw " <> show delivered) ("n-3" `elem` delivered)
+testHandlerExceptionRedelivery = liveRetryScenario True True
 
 testConfig :: TestEnv -> KafkaAdapterConfig
 testConfig env =
@@ -571,7 +540,7 @@ liveRetryScenario exactOrder throws = do
         target = [TopicPartition env.testTopic (PartitionId 0) (PartitionOffset (fromIntegral end))]
         props = brokersList [env.testBroker] <> groupId env.testGroupId <> noAutoOffsetStore
         sub = topics [env.testTopic] <> offsetReset Earliest
-    produceMessages env payloads
+    produceMessagesBounded env payloads
     seen <- newIORef []
     completed <- newIORef []
     retried <- newIORef False

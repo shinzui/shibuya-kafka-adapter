@@ -6,6 +6,7 @@ module Kafka.TestEnv
 
     -- * Producing
     produceMessages,
+    produceMessagesBounded,
     produceKeyedMessages,
     producePartitionMessages,
 
@@ -124,9 +125,16 @@ mkSubscription env =
 
 -- | Produce messages with the given payloads to the test topic.
 produceMessages :: TestEnv -> [ByteString] -> IO ()
-produceMessages env payloads = do
+produceMessages env = produceMessagesWith (mkProducerProps env) env
+
+-- Bound delivery and producer close when the broker is unavailable.
+produceMessagesBounded :: TestEnv -> [ByteString] -> IO ()
+produceMessagesBounded env = produceMessagesWith (mkProducerProps env <> P.sendTimeout (Timeout 5000)) env
+
+produceMessagesWith :: ProducerProperties -> TestEnv -> [ByteString] -> IO ()
+produceMessagesWith props env payloads = do
   result <- runEff . runError @KafkaError $ do
-    runKafkaProducer (mkProducerProps env) $ do
+    runKafkaProducer props $ do
       forM_ payloads $ \payload ->
         produceMessage
           ProducerRecord
