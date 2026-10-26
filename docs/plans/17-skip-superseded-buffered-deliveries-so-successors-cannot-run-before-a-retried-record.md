@@ -10,9 +10,22 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-30T14:44:59Z
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T19:08:58Z
+      mode: "update"
+      note: "Correct published-version collision and batch-worker bypass; preserve detailed metrics and strengthen synchronized ordering and finalization acceptance."
+  reviews:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T19:10:34Z
+      verdict: "approved"
+      note: "Approved revised plan subject to plan 16 prerequisite; corrected version collision, actual batch entry, status sampling and completion oracles. Existing 40 adapter tests and 289 core examples pass; feature, performance and live validation remain outstanding."
 ---
 
 # Skip superseded buffered deliveries so successors cannot run before a retried record
+
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
@@ -21,18 +34,24 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 ## Purpose / Big Picture
 
-An application that consumes Kafka through `shibuya-kafka-adapter` and the Shibuya
-runner processes one record at a time, in partition order. When a handler returns
-`AckRetry` for a record, the adapter arranges for that record to be delivered again.
+
+An application that consumes Kafka through `shibuya-kafka-adapter` and a serial,
+single-message Shibuya processor handles one record at a time, in partition order.
+When a handler returns `AckRetry` for a record, the adapter arranges for that record to be delivered again.
 Today the records that follow it on the same partition, and that were already waiting
 to be handled, still run their handlers before the retried record comes back. An
 application that relies on partition order sees the effects of offsets 21 through 49
 before the effect of offset 20. This is recorded as BUG-2 in
 `docs/bug-reports/2-buffered-successors-execute-before-a-retried-record.md`.
 
-After this plan, a record that asks for a retry blocks the records behind it on the
-same partition. Their handlers do not run until the retried record has been delivered
-again and resolved, and then each of them runs once.
+After this plan, under serial single-message processing, a record that asks for a
+retry blocks the records behind it on the same partition. Their handlers do not run
+until the retried record is resolved. In the finite test with one retry and no
+rebalance, each successor then runs once. This is not an exactly-once guarantee
+across failures or restarts. A batch handler receives its members together, so a
+retry cannot undo successors already handled in that same batch. If retention or
+compaction removes the retried offset, plan 16 explicitly abandons that missing
+record and resumes at the next available offset.
 
 The adapter cannot do this alone, because the waiting records have already been
 handed to the Shibuya runner. So the plan has two parts. It adds a small question to
@@ -42,8 +61,9 @@ from the retry state it already keeps.
 
 You can see it working with a broker-free test that drives the real adapter and the
 real runner over an in-memory log of twelve records and retries offset 4 once. The
-handler sees offsets `0,1,2,3,4,4,5,6,7,8,9,10,11`. Before this plan it sees
-`0..11, 4, 5..11`. A live test against Redpanda shows the same order.
+handler must see offsets `0,1,2,3,4,4,5,6,7,8,9,10,11`. With plan 16 alone and
+the synchronized buffered schedule below it sees `0..11, 4, 5..11`. The currently
+checked-out adapter predates plan 16. A live Redpanda test must show the fixed order.
 
 This plan changes two repositories: this one, and `shibuya-core` in
 `mori://shinzui/shibuya`, which on this machine is the sibling checkout
@@ -54,29 +74,34 @@ which must be implemented first.
 
 ## Progress
 
-- [ ] Milestone 0: confirm plan 16 is implemented (`gateRecords` exists, its tests
-  pass) and both working trees are clean.
-- [ ] Milestone 1 (shibuya): add `DeliveryStatus` and the `deliveryStatus` field to
-  `Shibuya.Core.Ingested`, defaulted by `mkIngested`, and export both.
-- [ ] Milestone 1 (shibuya): make `processOne` and `processOneBatch` ask for the
-  status before running a handler.
-- [ ] Milestone 1 (shibuya): add the core tests; the core suite passes.
-- [ ] Milestone 2 (shibuya): benchmark comparison against the pre-change baseline
-  recorded.
-- [ ] Milestone 2 (shibuya): haddocks, ADR, changelog, and the 0.11.0.0 candidate
-  version prepared.
-- [ ] Milestone 3 (adapter): build against the unreleased core through
-  `cabal.project.local`; `mkIngested` supplies `deliveryStatus`.
-- [ ] Milestone 3 (adapter): add the status tests and the two ordering tests; rewrite
-  `Handler exception redelivers instead of skipping`; the suite passes.
-- [ ] Milestone 4 (adapter): ten consecutive suite runs pass; all packages build.
-- [ ] Milestone 4 (adapter): module documentation, README files, capability records,
-  changelog, and ADR updated; BUG-2 marked fixed.
-- [ ] Milestone 5 (after `shibuya-core` 0.11.0.0 is on Hackage): remove the local
-  override and confirm the adapter builds and passes from Hackage.
 
+- [ ] Milestone 0: plan 16's source gate and acceptance are complete; establish the
+  current core/adapter test and benchmark baselines and verify release versions.
+- [ ] Milestone 1: both actual runner paths skip superseded deliveries, preserve
+  metrics and lifecycle behavior, and pass deterministic core regression tests.
+- [ ] Milestone 2: record the core benchmark comparison and prepare the documented,
+  tested 0.12.0.0 core/metrics candidate without publishing it.
+- [ ] Milestone 3: the adapter builds against the local candidate and passes status,
+  synchronized retry-order, batch-liveness, and handler-exception tests.
+- [ ] Milestone 4: ten full-suite runs and all-component builds pass; documentation,
+  capability and bug records, and ADRs reflect the verified behavior.
+- [ ] Milestone 5: after the owner publishes the feature-bearing core release,
+  remove only this plan's local override and verify the Hackage build and tests.
+
+Review handoff (2026-10-26): this is a plan revision, not implementation. Plan 16 is
+still unimplemented: `dropStaleRecords` exists, while `gateRecords`,
+`Kafka/ScriptedLog.hs`, and `SourceGateTest.hs` do not. Both repositories started
+clean. The adapter is 0.10.0.0 and already requires core 0.11.0.0. Core and metrics
+0.11.0.0 are published, but neither the checked-out nor tagged core has
+`deliveryStatus`. The next candidate in this plan is therefore 0.12.0.0; recheck
+Hackage and upstream tags before implementation if releases have advanced.
+Review validation passed: 40 broker-free adapter tests and 289 core examples, zero
+failures. No feature implementation, benchmarks, or live-broker tests were run in
+this review; those remain milestone acceptance. Capability and strict bug-report
+OKF validation passed, as did plan structure, fence, link, and whitespace checks.
 
 ## Surprises & Discoveries
+
 
 - 2026-09-30 (planning): BUG-2 was filed against Hackage 0.9.0.1 and still reproduces
   on 0.9.1.0 and the current source. Fifty records on one partition with one
@@ -115,12 +140,31 @@ which must be implemented first.
   `mori://shinzui/shibuya-pgmq-adapter` at
   `shibuya-pgmq-adapter/src/Shibuya/Adapter/Pgmq/Internal.hs` and
   `mori://shinzui/kiroku` at
-  `shibuya-kiroku-adapter/src/Shibuya/Adapter/Kiroku/Convert.hs`. Both keep building
-  today because they pin `shibuya-core ^>=0.10.0.0`. Artifact-level Mori URIs for
-  source files are pending.
+  `shibuya-kiroku-adapter/src/Shibuya/Adapter/Kiroku/Convert.hs`. Both kept building
+  at that time because they pinned `shibuya-core ^>=0.10.0.0`. Artifact-level Mori
+  URIs for source files are pending.
 
+
+- 2026-10-26 (review): Hackage's preferred-version endpoints for core and metrics
+  both report 0.11.0.0 as their newest release; upstream has `v0.11.0.0`, whose
+  peeled commit is `a4b2b8e3e876f550b7fa08fb8d5a94975a0cc9da`. Its `Ingested`
+  definition has no status field. Reusing that version would allow an incompatible
+  published dependency to satisfy the adapter bound.
+
+- 2026-10-26 (review): the batch loop calls `processOneBatchWithDetail` directly.
+  Wrapping only exported `processOneBatch` would leave production and
+  `runBatchesWithMetrics` processing unchecked. Single-message processing also now
+  has basic/detailed branches, in-flight slot ownership, and cursor recording that
+  must remain behind the new check.
+
+- 2026-10-26 (review): the old batch pseudocode queried some statuses twice, and an
+  inbox capacity of ten did not prove that three deliveries had been ingested.
+  The revised design samples each member once and tests with explicit source/handler
+  handshakes. Finalization, rather than a handler's intention to return `AckOk`, is
+  the completion boundary.
 
 ## Decision Log
+
 
 - Decision: fix BUG-2 with a pre-handler check in `shibuya-core`, not with lock-step
   emission inside the adapter.
@@ -164,14 +208,14 @@ which must be implemented first.
   this fix needs.
   Date: 2026-09-30
 
-- Decision: prepare `shibuya-core` and `shibuya-metrics` as a 0.11.0.0 candidate in
-  this plan, and make the adapter require `shibuya-core ^>=0.11.0.0`.
+- Decision: prepare `shibuya-core` and `shibuya-metrics` as a 0.12.0.0 candidate in
+  this plan, and make the adapter require `shibuya-core ^>=0.12.0.0`.
   Rationale: a new field on an exported record is a breaking change, so the next
-  version is a major one. The adapter must name a version that has the field; naming
-  0.10.0.0 would let it resolve against the published 0.10.0.0 and fail to compile.
+  version is a major one. Updated on 2026-10-26: 0.11.0.0 is already published
+  without the field, so the new candidate and lower bound are 0.12.0.0.
   This follows the adapter's earlier "prepare candidate" commit before a coordinated
   release.
-  Date: 2026-09-30
+  Date: 2026-09-30; revised 2026-10-26
 
 - Decision: commit the adapter change before the core is published, developing through
   the git-ignored `cabal.project.local`.
@@ -181,19 +225,31 @@ which must be implemented first.
   Date: 2026-09-30
 
 - Decision: leave the other adapters to their own repositories.
-  Rationale: they keep building against 0.10.0.0. Each needs one added line when it
-  moves to the new core, which the core changelog entry spells out.
+  Rationale: their existing bounds keep them on their current core series. Recheck
+  their bounds and constructor uses when migrating; adding the default status field
+  is the migration for direct `Ingested` construction.
   Date: 2026-09-30
 
 
+- Decision: sample each batch member's status exactly once in the shared
+  `processOneBatchWithDetail` entry, preserving the existing basic/detailed
+  specializations and all current-member finalization logic.
+  Rationale: a wrapper on the exported entry is bypassed, and querying again can
+  contradict an earlier superseded decision. This is an admission snapshot, not a
+  lock preventing later rebalance or concurrent retry.
+  Date: 2026-10-26
+
 ## Outcomes & Retrospective
+
 
 (To be filled during and after implementation.)
 
 
 ## Context and Orientation
 
+
 ### The two repositories
+
 
 This repository publishes `shibuya-kafka-adapter`. Its library lives in
 `shibuya-kafka-adapter/src`, its tests in `shibuya-kafka-adapter/test`. Two unpublished
@@ -211,6 +267,7 @@ run inside the Nix development shell (`nix develop -c bash -c '...'`), because t
 Kafka client library comes from it.
 
 ### Terms
+
 
 A Kafka partition is an ordered log of records, each with an increasing offset. A
 consumer polls to read records from its position, and can seek to move that position
@@ -232,6 +289,7 @@ each batch.
 
 ### How the adapter tracks a retry
 
+
 In `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`, every delivery is
 registered by `registerDelivery`, which gives it a `DeliveryAttempt`: its partition,
 its offset, a delivery token (a number that increases with each delivery in this
@@ -245,25 +303,41 @@ accepted. `attemptIsAccepted` is the existing predicate that checks assignment,
 generation, and `validFromToken`. This design is recorded in
 [`docs/adr/0001-fence-acknowledgements-by-delivery-and-assignment.md`](../adr/0001-fence-acknowledgements-by-delivery-and-assignment.md).
 
-Plan 16 added the source gate, `gateRecords`, in the same module. It drops records
+Plan 16 will add the source gate, `gateRecords`, in the same module. It drops records
 polled before a retry seek and holds records delivered again after the seek until the
-barrier is resolved. Plan 16 also created an ADR in `docs/adr/` whose file name ends
+barrier is resolved. Plan 16 will also create an ADR in `docs/adr/` whose file name ends
 in `hold-replayed-records-behind-a-pending-retry.md`, the broker-free log
 in `shibuya-kafka-adapter/test/Kafka/ScriptedLog.hs`, and the test module
 `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs`. Both ADRs are
 relevant. If plan 18 has been implemented there is a third, about polling under the
 consumer lock, which does not affect this work.
 
-In `mori://shinzui/shibuya`, `docs/adr/` holds six records. None covers delivery
-status. Two constrain this work:
-`docs/adr/0006-benchmark-gate-runtime-dependency-changes-regardless-of-release-level.md`
-requires a benchmark comparison for minor and major releases and treats an allocation
-increase as a regression, and
-`docs/adr/0003-make-processor-termination-and-shutdown-outcomes-explicit.md` defines
-how processor failures are reported. Artifact-level Mori URIs for these ADRs are not
-registered; the project URI and project-relative paths above identify them.
+The dependency checkout is identified by `mori://shinzui/shibuya`; all core paths
+in this document are relative to that project's root. Artifact-level URIs for
+source files and its unprofiled ADR directory are pending. `mori registry docs`
+lists its documentation, and `mori path mori://shinzui/shibuya` resolves the root.
+At review time its `docs/adr/` contains twelve records, and no delivery-status ADR.
+Relevant records under that canonical project are:
+
+- `docs/adr/0006-benchmark-gate-runtime-dependency-changes-regardless-of-release-level.md`:
+  compare runtime changes and treat allocation increases as regressions.
+- `docs/adr/0003-make-processor-termination-and-shutdown-outcomes-explicit.md`:
+  preserve infrastructure failure reporting, cancellation, and wake-up behavior.
+- `docs/adr/0009-account-for-in-flight-detail-and-latency-with-bounded-synchronized-slots-behind-an-opt-in-detail-level.md`:
+  retain basic/detailed specialization, masked slot ownership, and successful
+  finalization cursor hooks; a skipped delivery owns no slot and advances no cursor.
+- `docs/adr/0012-keep-telemetry-ownership-and-disabled-context-contracts-explicit.md`:
+  keep tracing ownership and cancellation intact; lifecycle spans coexist with
+  processing spans, so telemetry tests must select the processing span.
+
+Neither manifest currently declares a profiled ADR bundle. Preserve the existing
+filesystem convention; if that changes, follow `agents/skills/exec-plan/ADR.md`
+and use the registered canonical handle rather than inventing one. The core's
+`AGENTS.md` limits benchmarking to the existing workflow; this plan does not
+request new tooling, profiles, calibration, or remote measurement.
 
 ### The defect
+
 
 Take one partition with offsets 0 through 49 and a handler that returns `AckRetry` the
 first time it sees offset 20. One poll returns all fifty records and the ingester puts
@@ -281,6 +355,7 @@ lease, and `processOne` in
 unconditionally.
 
 ### The pieces of `shibuya-core` this plan touches
+
 
 `shibuya-core/src/Shibuya/Core/Ingested.hs` defines `Ingested` and the smart
 constructor `mkIngested`.
@@ -302,8 +377,9 @@ opens a tracing span, sets attributes, increments the in-flight count with
 outcome with `finishProcessing`.
 
 `shibuya-core/src/Shibuya/Internal/Runner/BatchProcessor.hs` defines
-`processOneBatch`, which does the same for a batch: it calls the batch handler with
-every member and then finalizes every member.
+`processOneBatch` and its shared worker `processOneBatchWithDetail`. The batch loop
+calls the worker directly. It calls the batch handler with every retained member
+and then finalizes every retained member, with basic/detailed metrics branches.
 
 `shibuya-core/src/Shibuya.hs` is the umbrella module that re-exports `Ingested (..)`
 and `mkIngested`.
@@ -311,7 +387,9 @@ and `mkIngested`.
 
 ## Plan of Work
 
+
 ### The design in one place
+
 
 `shibuya-core` gains a two-valued type and one field.
 
@@ -328,8 +406,10 @@ data DeliveryStatus
 
 `Ingested` gains `deliveryStatus :: !(Eff es DeliveryStatus)`. `mkIngested` sets it to
 `pure DeliveryCurrent`, so an adapter that does nothing behaves exactly as before. The
-runner runs the action immediately before it would call the handler. If the answer is
-`DeliverySuperseded`, it records that on the span and moves on to the next delivery.
+runner runs the action at processing admission, before entering handler and metrics
+work (once for each member when a batch is admitted). If the answer is
+`DeliverySuperseded`, the single-message path records that on the span and skips
+the delivery; the batch path excludes that member before opening its batch span.
 
 The Kafka adapter answers from the state it already has. A delivery is current when
 `attemptIsAccepted` holds for it and one of these is true: the partition has no
@@ -339,23 +419,36 @@ is superseded: a successor above a pending barrier, the original delivery that a
 for the retry, a delivery older than `validFromToken`, and a delivery from a revoked
 assignment.
 
-In serial processing this is exact. The processor finalizes the retry for offset 20
-before it takes offset 21 from the inbox, so when it asks about 21 the barrier is
+For retry ordering in serial single-message processing this is exact. The processor
+finalizes the retry for offset 20 before it takes offset 21 from the inbox, so when it asks about 21 the barrier is
 already set. The successors are skipped, the redelivery of 20 is current, and once it
 succeeds the barrier clears and the redelivered successors, which plan 16's gate
-releases at that moment, are current too.
+releases at that moment, are current too. The check does not atomically claim a
+delivery: revocation may occur after a current answer and before handler entry, even
+with a serial processor. It cannot prevent work already admitted or in progress,
+and it does not repair plan 16's deferred pre-rebalance poll-buffer issue.
 
 ### Milestone 0: confirm the starting point
 
+
 Read `docs/plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md`
-and confirm every item in its Progress section is checked. Confirm that
+and verify its completed acceptance evidence against the source, rather than relying
+only on checkboxes. Confirm that
 `gateRecords` is exported from
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs` and that the adapter
-suite passes. If plan 16 is not complete, stop and implement it first. Confirm
-`git status` is clean in both repositories and that the core suite passes before any
-edit.
+suite passes. Plan 16 is a prerequisite for implementation, not for this review.
+If it remains incomplete, report that prerequisite and do not silently implement a
+second plan under a review/update request. For implementation, obtain completion
+of plan 16 before proceeding. After plan 16, capture its existing `Source gate`
+benchmark baseline before changing the core dependency, using the commands in
+that plan; capture the core baseline before Milestone 1 as shown below. Inspect both working trees and preserve unrelated
+changes; do not reset them to satisfy a cleanliness check. Record both HEADs and
+run the core suite before editing. Verify the candidate version against Hackage
+and upstream tags using the commands in Concrete Steps; if 0.12.0.0 has since been
+used without this API, consistently advance the candidate and bounds in this plan.
 
 ### Milestone 1: the delivery status in `shibuya-core`
+
 
 All work in this milestone is in `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya`.
 At its end the runner skips superseded deliveries and the core suite proves it.
@@ -371,7 +464,7 @@ after `lease`, and set it in `mkIngested`.
     -- | Optional lease for visibility timeout extension
     lease :: !(Maybe (Lease es)),
     -- | Asked by the runner immediately before it invokes the handler.
-    -- Must not throw.
+    -- Must return promptly without synchronous exceptions; cancellation propagates.
     deliveryStatus :: !(Eff es DeliveryStatus)
   }
 ```
@@ -379,65 +472,42 @@ after `lease`, and set it in `mkIngested`.
 In `shibuya-core/src/Shibuya.hs`, add `DeliveryStatus (..)` to the export list next to
 `Ingested (..)` and to the import from `Shibuya.Core.Ingested`.
 
-In `shibuya-core/src/Shibuya/Internal/Runner/Supervised.hs`, change `processOne`.
-Directly after `addAttributes traceSpan mergedAttrs` and before `beginProcessing`, ask
-for the status. Move everything from `beginProcessing` to the end of the lambda into a
-local function, unchanged, and call it for a current delivery.
+In `mori://shinzui/shibuya`, edit
+`shibuya-core/src/Shibuya/Internal/Runner/Supervised.hs`. After
+`addAttributes traceSpan mergedAttrs`, ask `ingested.deliveryStatus`. For
+`DeliveryCurrent`, run the existing `let process ...` body and its basic/detailed
+branch unchanged. For `DeliverySuperseded`, emit `eventAckDecision` with
+`attrShibuyaAckDecision = "superseded"` and set the span status to `OTel.Ok`.
+Do not call the handler, finalizer, `beginProcessing`, slot ownership functions,
+cursor recording, or outcome counters on that branch. Preserve the existing
+`INLINE processOne`, the specialized `detailed` argument, masking and cleanup.
 
-```haskell
-      addAttributes traceSpan mergedAttrs
+In the same project's `shibuya-core/src/Shibuya/Internal/Runner/BatchProcessor.hs`,
+put filtering inside the shared `processOneBatchWithDetail` entry. Both exported
+`processOneBatch` and `processBatchesUntilDrainedWithDetail` must reach it. Move
+its existing processing body to a private worker taking the same `detailed`
+argument and retained `(BatchInfo, NonEmpty Ingested)` pair; preserve specialization
+and ownership behavior. Do not merely wrap exported `processOneBatch`.
 
-      status <- ingested.deliveryStatus
-      case status of
-        DeliverySuperseded -> do
-          addEvent traceSpan $
-            mkEvent
-              eventAckDecision
-              [(attrShibuyaAckDecision, OTel.toAttribute ("superseded" :: Text))]
-          setStatus traceSpan OTel.Ok
-        DeliveryCurrent -> processCurrent traceSpan messageId msgIdText
-  where
-    processCurrent traceSpan messageId msgIdText = do
-      -- Increment in-flight and add inflight attributes.
-      currentInflight <- liftIO $ beginProcessing metricsHandle maxConc
-      ...
-```
+Read every member's status once, in order. Scan the original list while counting
+the current prefix. If all are current, pass the original pair through without
+building a replacement member list. At the first superseded member, keep the
+already-checked prefix, exclude that member, and filter only the unchecked suffix
+with one read per member. Rebuild the retained list only on this exceptional path.
+Never query the prefix or a rejected member again. Preserve order and, for a
+nonempty retained list, use `info {size = NE.length retained}` so the batch key,
+trigger, and partition remain unchanged. The retained first member supplies the
+trace parent and detailed in-flight identity. If none remain, return without a
+handler, finalizer, processing span, in-flight slot, cursor update, or batch outcome
+metric. Received counters already recorded during ingestion stay unchanged.
 
-The existing helpers `isLeft`, `finalizationFailureText`, `showAckDecision`, and
-`showHaltReason` are already in that `where` block; `processCurrent` joins them. A
-superseded delivery therefore never touches the in-flight count or the processed and
-failed counters, and the halt and failure paths are untouched.
-
-In `shibuya-core/src/Shibuya/Internal/Runner/BatchProcessor.hs`, rename the existing
-`processOneBatch` to `processCurrentBatch` without changing its body, and add a new
-`processOneBatch` in front of it. The common case, where no member is superseded, must
-not allocate a new list.
-
-```haskell
-processOneBatch metricsHandle procId maxConc stopSignal exitPublisher handler (emitted, members) = do
-  anySuperseded <-
-    foldlM
-      (\found ingested -> if found then pure True else (== DeliverySuperseded) <$> ingested.deliveryStatus)
-      False
-      members
-  if not anySuperseded
-    then processCurrentBatch metricsHandle procId maxConc stopSignal exitPublisher handler (emitted, members)
-    else do
-      current <- filterM (\ingested -> (== DeliveryCurrent) <$> ingested.deliveryStatus) (NE.toList members)
-      for_ (NE.nonEmpty current) $ \batch ->
-        processCurrentBatch
-          metricsHandle
-          procId
-          maxConc
-          stopSignal
-          exitPublisher
-          handler
-          (BatchInfo {batchKey = emitted.batchKey, size = NE.length batch, trigger = emitted.trigger, partition = emitted.partition}, batch)
-```
-
-It needs `filterM` from `Control.Monad`, `foldlM` from `Data.Foldable`, and
-`DeliveryStatus (..)` from `Shibuya.Core.Ingested`. A batch whose members are all
-superseded is skipped entirely: no handler call, no finalizer call, no batch metrics.
+The check must be a quick, nonblocking, side-effect-free read and must not throw a
+synchronous exception. It is an admission snapshot, not a reservation or a second
+check between members of a batch. Do not catch failures as handler exceptions or
+turn them into acknowledgements; unexpected failure uses existing infrastructure
+failure propagation, and asynchronous cancellation remains effective. The
+`superseded` span event is a single-message-path guarantee; this plan does not
+create individual spans for filtered batch members.
 
 Add tests. In `shibuya-core/test/Shibuya/Runner/SupervisedSpec.hs`, under a new
 `describe "delivery status"`, using the file's existing helpers (`testAdapter`,
@@ -450,9 +520,11 @@ Add tests. In `shibuya-core/test/Shibuya/Runner/SupervisedSpec.hs`, under a new
   third only, the finalizer to have been called for the first and third only, and
   metrics `received == 3`, `processed == 2`, `failed == 0`.
 - "asks for the status at handler time, not at ingestion": three deliveries whose
-  status reads a shared `IORef Bool`. The handler for the first sets it so that the
-  second reports superseded. Use inbox size 10 so all three are in the inbox before the
-  first handler runs. Expect the handler to see the first and third.
+  second status reads a shared `IORef Bool`, while the first and third remain current.
+  Append a signal action after the third source yield (before any further upstream
+  pull). The first handler awaits that signal, then changes the flag. Inbox size 10
+  permits this schedule but does not establish it by itself. Bound the wait and
+  clean up on failure. Expect the handler and finalizer to see only the first and third.
 - "treats deliveries built by mkIngested as current": the existing tests cover this;
   add one explicit assertion that a default delivery is handled.
 
@@ -463,44 +535,63 @@ In `shibuya-core/test/Shibuya/Runner/BatchProcessorSpec.hs`, using
   and fourth superseded. Expect the handler to receive three messages and a
   `BatchInfo` whose `size` is 3, and exactly those three to be finalized.
 - "skips a batch whose members are all superseded": expect no handler call and no
-  finalizer call.
+  finalizer call and no processed/failed/batch outcome increments.
+- "samples every batch status once": count status calls for mixed, all-current, and
+  all-superseded batches; require one per member, stable order, and unchanged batch
+  metadata except size. Include a status action returning superseded on its first
+  invocation and current on any later invocation to catch accidental double reads.
+- Exercise the real batch runner, not just a new filtering helper. Run skip cases
+  with both basic and detailed metrics; a skipped delivery contributes no latency
+  sample, in-flight identity, cursor progress, or slot leak. Add a two-batch case
+  where finalizing the first changes the second batch's status before admission.
 
-In the telemetry wire-format spec under `shibuya-core/test/Shibuya/Telemetry`, next to
+For both single and batch paths, verify a throwing status produces an infrastructure
+failure with no handler or finalizer call, using existing lifecycle test helpers.
+
+In `shibuya-core/test/Shibuya/Telemetry/SemanticSpec.hs`, next to
 the existing test "emits a process span with conventions-aligned attributes and
 events", add a case asserting that a superseded delivery's span carries one
 `shibuya.ack.decision` event with the value `superseded` and no handler-started event.
-Copy the existing test's setup.
+Copy the existing test's setup and filter by processing span name so the ingestion
+lifecycle span does not invalidate the assertion.
 
 Run the core suite and commit in the shibuya repository.
 
 ### Milestone 2: core regression gate, documentation, and candidate version
 
+
 Still in the shibuya repository. At the end of this milestone the core is a committed
-0.11.0.0 candidate that the adapter can build against.
+0.12.0.0 candidate that the adapter can build against.
 
 Run the benchmark comparison against the baseline captured in Milestone 1. The change
 adds one call through a record field per message on the single-message path and one
 fold per batch. The comparison must not report any benchmark slower by more than ten
 percent, and allocation per message must not rise; ADR 0006 treats an allocation
 increase as a regression even when time is within noise. Record the figures for the
-`HotPath` and `Framework` groups in Surprises & Discoveries. If either limit is
-exceeded, stop, record the numbers in the Decision Log, and first try marking the
-default `pure DeliveryCurrent` so that it is shared rather than rebuilt per delivery.
+`hot-path` and `framework-overhead` groups in Surprises & Discoveries. Record time
+and allocation from the same existing workload on both revisions; the CLI timing threshold alone is not allocation evidence. Adding a record field can
+increase allocation even when its default action is shared. If either existing
+limit is exceeded, record the result, investigate within the existing workflow,
+and retain the gate as unmet until resolved or the owner explicitly changes it.
+Do not expand benchmark tooling or measurement scope to work around a failed gate.
 
 Update the documentation comments. In `Shibuya.Core.Ingested`, document the field:
 when the runner asks, what each answer means, that it must not throw, and that it is
-asked once per delivery on the single-message path and up to twice on the batch path.
+asked once per admitted delivery on both paths; clarify that a current answer does
+not lock out a subsequent revocation or concurrent retry.
 In `shibuya-core/src/Shibuya/Core/AckHandle.hs`, the module header says the framework
-calls `finalize` at most once per delivery; add that it is not called at all for a
+resolves one decision per delivery, with retries of that same decision on transient
+finalizer failure. Preserve that exception and add that it is not called at all for a
 delivery whose status is `DeliverySuperseded`. Search the prose documentation for the
 same claim and update any statement that every ingested message is finalized.
 
 ```bash
-grep -rn -i "always finalize\|always observes a finalization\|finalized exactly once" docs README.md shibuya-core
+rg -n -i "always finalize|always observes a finalization|finalized exactly once" docs README.md shibuya-core
 ```
 
-Write `docs/adr/0007-let-adapters-supersede-a-delivery-before-its-handler-runs.md`,
-or the next unused number if 0007 is taken, in the format of the existing records in
+In `mori://shinzui/shibuya`, create the next unused filesystem ADR named
+`docs/adr/NNNN-let-adapters-supersede-a-delivery-before-its-handler-runs.md`
+(the next number was 0013 at review), in the format of the existing records in
 that directory (title, `Status:`, `Date:`,
 `## Context`, `## Decision`, `## Consequences`, `## Evidence`). Record why the check
 lives on `Ingested`, why a superseded delivery is not finalized and not counted, why
@@ -512,34 +603,42 @@ Add an `Unreleased` section at the top of the root `CHANGELOG.md` with a
 `Breaking Changes` entry for `shibuya-core`: `Ingested` has a new field
 `deliveryStatus`; code that builds `Ingested` with record syntax must add
 `deliveryStatus = pure DeliveryCurrent`; code that uses `mkIngested` is unaffected.
-Name the two adapters listed in Surprises & Discoveries as needing that one line.
+Explain the migration for direct record constructors. The two adapters listed in
+Surprises & Discoveries were September findings; use `mori registry dependents
+shinzui/shibuya --packages` and inspect current constructors/bounds before naming
+today's affected consumers. Audit direct constructors and record patterns in the
+core checkout as well; positional uses must account for the new field.
 
-Set `version: 0.11.0.0` in `shibuya-core/shibuya-core.cabal` and
-`shibuya-metrics/shibuya-metrics.cabal`, and change the `shibuya-metrics` library's
-bound to `shibuya-core ^>=0.11.0.0`. `shibuya-example` and `shibuya-core-bench` depend
+Set `version: 0.12.0.0` in `shibuya-core/shibuya-core.cabal` and
+`shibuya-metrics/shibuya-metrics.cabal`, and change every `shibuya-metrics` component's
+core bound to `shibuya-core ^>=0.12.0.0`. `shibuya-example` and `shibuya-core-bench` depend
 on `shibuya-core` without a version and need no change. Build everything and run the
 `shibuya-core` and `shibuya-metrics` suites. Commit. Do not tag and do not publish.
 
 ### Milestone 3: the adapter answers the question
 
+
 Back in this repository. At the end of this milestone the ordering tests pass.
 
 Point the build at the unreleased core. `cabal.project.local` is git-ignored and
-currently holds only comments. Replace its contents with the following.
+is absent on the reviewed checkout. Create it with the following when absent, or
+merge the package entry into an existing override without overwriting user settings.
+Record its previous contents/absence for Milestone 5.
 
 ```cabal
--- Temporary: build against the unreleased shibuya-core 0.11.0.0 candidate.
--- Remove once shibuya-core 0.11.0.0 is on Hackage (plan 17, Milestone 5).
+-- Temporary: build against the unreleased shibuya-core 0.12.0.0 candidate.
+-- Remove once shibuya-core 0.12.0.0 is on Hackage (plan 17, Milestone 5).
 packages:
   ../shibuya/shibuya-core
 ```
 
-Change every `shibuya-core ^>=0.10.0.0` to `shibuya-core ^>=0.11.0.0`. The bound
+Change every `shibuya-core ^>=0.11.0.0` to `shibuya-core ^>=0.12.0.0`. The bound
 appears in the library and test-suite stanzas of
 `shibuya-kafka-adapter/shibuya-kafka-adapter.cabal`, in
 `shibuya-kafka-adapter-bench/shibuya-kafka-adapter-bench.cabal`, and in
 `shibuya-kafka-adapter-jitsurei/shibuya-kafka-adapter-jitsurei.cabal`; find them all
-with `grep -rn "shibuya-core" --include="*.cabal" .`.
+with `rg -n "shibuya-core" -g "*.cabal" .`. Include both benchmark and executable
+stanzas; there are five adapter-side occurrences at review time.
 
 In `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`, split `mkAckHandle`
 so that the delivery attempt is available to `mkIngested`. `mkAckHandle` keeps its
@@ -589,6 +688,10 @@ deliveryStatusOf state attempt = do
   pure $ if isCurrent then Core.DeliveryCurrent else Core.DeliverySuperseded
 ```
 
+Register exactly once per emitted delivery and share that same attempt between
+status and acknowledgement; registering twice would split their identity. Keep
+plan 16's seek-completion and cancellation-safe notification behavior unchanged.
+
 The module already imports `Shibuya.Core.Ingested qualified as Core`.
 `deliveryStatusOf` does not need to be exported; tests reach it through `mkIngested`.
 
@@ -606,49 +709,85 @@ interpreter, finalizes some of them, and runs another delivery's `deliveryStatus
   registered after it is current.
 - A delivery below the barrier is current.
 - After `kafkaRebalanceHandler` reports the partition revoked, an existing delivery is
-  superseded.
+  superseded. After reassignment it stays superseded while a new delivery is current.
+- A retry on one partition does not supersede another partition's delivery.
+- Successful dead-letter finalization of the replay clears the barrier, with old
+  tokens still superseded; a retry of the replay supersedes that attempt again.
+- Plan 16's missing-offset recovery invalidates old delivery tokens, including their
+  status actions, and admits the next available offset.
 
-Update the scripted test from plan 16,
-`buffered retry commits every successor (scripted log)`: its expected handler order
-changes from `[0 .. 11] <> [4 .. 11]` to `[0 .. 4] <> [4 .. 11]`; `stored` and `seeks`
-are unchanged. Plan 16's second scripted test,
-`a record that retries twice still commits every successor (scripted log)`, changes in
-the same way: its expected handler order becomes `[0,1,2,3,4,4,4,5,6,7,8,9,10,11]`,
-with `stored == [0 .. 11]` and `seeks == [4,4]` unchanged. Both orders were observed
-with the prototype. Rename the two tests to say what they now show, for example
-`a retried record blocks its successors (scripted log)`.
+Update plan 16's two scripted retry tests in
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs`. Its current
+revision treats handler traces as diagnostics; this plan makes the synchronized
+single-message trace an assertion. Preserve the source wrapper's one-time signal
+immediately after the first twelve yields, before pulling a thirteenth record.
+The first offset-4 handler must wait for that signal before requesting retry, so
+all original successors are queued. Do not use sleeps to establish this order.
+Keep the original stream open, use `Serial`, and stop only after `stored` contains
+all twelve offsets. Fail bounded waits explicitly and run `stopApp` in cleanup
+while the Kafka interpreter remains alive.
 
-Add a live test to `test/Shibuya/Adapter/Kafka/IntegrationTest.hs` named
-`a retried record blocks its successors`: twelve payloads `o-0` through `o-11` on one
-partition, a handler that retries `o-4` once, run under `runApp` until the handler has
-returned `AckOk` for all twelve, then `stopApp`. Assert that the handler saw exactly
-`o-0, o-1, o-2, o-3, o-4, o-4, o-5, ..., o-11`. This holds whichever way the ingester
-and the processor interleave, because a successor is either skipped at handler time or
-was never emitted.
+For one retry, assert handler order `[0 .. 4] <> [4 .. 11]`, stored offsets
+`[0 .. 11]`, and seeks `[4]`. For two retries assert
+`[0,1,2,3,4,4,4,5,6,7,8,9,10,11]`, the same stores, and seeks `[4,4]`.
+Rename them to `a retried record blocks its successors (scripted log)` and
+`a twice-retried record blocks its successors (scripted log)`. Temporarily force
+only the adapter status action to return `DeliveryCurrent` in a scratch change,
+keeping plan 16 intact: the forced-buffering test must fail its handler-order
+assertion (the historical one-retry trace is `[0 .. 11] <> [4 .. 11]`). Restore the
+actual action and require both tests to pass. Without the handshake this negative
+control could pass just because the ingester was slow.
 
-Rewrite `Handler exception redelivers instead of skipping` so that it no longer counts
-emitted records. Remove `Stream.take 4`, run the unmodified adapter under `runApp`,
-wait until the handler has returned `AckOk` for `n-1`, `n-2`, and `n-3`, call
-`stopApp`, and assert the handler saw exactly `["n-1","n-2","n-2","n-3"]`. Keep the
-existing sixty-second style of timeout around the session.
+Retain plan 16's serial batch-runner liveness test. Superseded later batches must
+be skipped; the batch containing the retry can still have handled successors.
+The replay must be emitted by batch timeout, release the source hold after its
+successful finalization, and eventually store all offsets. Do not impose the
+single-message trace on this batch test.
+
+Add the live test `a retried record blocks its successors` in
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/IntegrationTest.hs`: twelve
+payloads `o-0` through `o-11`, one partition, a serial `runApp` handler retrying
+`o-4` once, and the same source/handler handshake to prove buffering. Observe
+successful finalization through a test-local acknowledgement wrapper that calls
+the real finalizer first and only then publishes completion, or use plan 16's
+verified committed-offset observation under the shared consumer lock. Waiting for
+the handler to return `AckOk` alone is insufficient. Once all twelve finalizations
+complete, gracefully stop, require successful drain, and assert the exact handler
+trace `o-0, o-1, o-2, o-3, o-4, o-4, o-5, ..., o-11`. Retain plan 16's committed
+offset 12 and restart assertions as commit-regression coverage.
+
+Rewrite `Handler exception redelivers instead of skipping` in that same file.
+Remove `Stream.take 4`; keep the source open until successful finalization of
+`n-1`, `n-2`, and `n-3`, using the same completion technique. The first handling
+of `n-2` throws as today. Require successful drain and exact handler trace
+`["n-1","n-2","n-2","n-3"]`. For both live tests wrap the entire session in a
+sixty-second timeout and ensure bracketed `stopApp` cleanup also runs on failure.
+Do not terminate the source by emitted-record count: skipped deliveries still
+occupy source yields.
 
 Run the suite and commit. The commit message must say that the build needs the
-unreleased core until 0.11.0.0 is published.
+unreleased core until 0.12.0.0 is published.
 
 ### Milestone 4: adapter regression gate, documentation, and records
 
-Run the full suite ten times in a row and build all three packages. Run the
-`Source gate` benchmark from plan 16 and confirm it is unchanged; this plan does not
-touch that path.
+
+Run the full suite ten times in a row and build all three packages with benchmarks
+enabled. Capture a fresh `Source gate` baseline after plan 16 and before changing
+the core dependency, then compare using plan 16's existing commands and ten-percent
+threshold. Its original scratch CSV may have been deleted; do not compare against
+a missing or pre-plan-16 fixture.
 
 Update the prose. In `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka.hs`, extend the
 `Message Lifecycle` item for `AckRetry` to say that records of the same partition
-already handed to the runner are skipped without running their handlers and are
-delivered again after the retried record. In the `Serial Operation Required` section,
+already handed to a serial single-message runner are skipped before handler entry
+and are delivered again after the retried record, subject to the missing-offset
+recovery policy. Describe the same-batch and concurrent-processing limits. In the
+`Serial Operation Required` section,
 add that under serial processing a retried record now blocks its successors. In the
 `Rebalance Callback Helper` section, add that with the helper installed, deliveries
-from a revoked assignment are skipped. Make the matching changes to `README.md` and
-`shibuya-kafka-adapter/README.md`.
+whose old assignment is already revoked when checked are skipped. Revocation after
+the check cannot cancel an admitted handler. Make the matching changes to
+`README.md` and `shibuya-kafka-adapter/README.md`.
 
 Update `docs/capabilities/offset-acknowledgement-semantics.md` (CAP-2) with the
 ordering guarantee and its limit to serial processing, add the two new tests to its
@@ -657,14 +796,16 @@ ordering guarantee and its limit to serial processing, add the two new tests to 
 order and correct it if present.
 
 Add to the `Unreleased` section of `shibuya-kafka-adapter/CHANGELOG.md` a
-`Breaking Changes` entry (requires `shibuya-core ^>=0.11.0.0`) and a `Bug Fixes` entry
+`Breaking Changes` entry (requires `shibuya-core ^>=0.12.0.0`) and a `Bug Fixes` entry
 describing the ordering fix.
 
 Write an ADR in `docs/adr/`, numbered with the next unused four-digit number and
 named `NNNN-answer-delivery-status-from-the-retry-barrier.md`, in the format of
-ADR 0001, recording the predicate, why it is exact under serial processing and only
-best-effort under concurrent processing, and that it depends on the core contract
-recorded in `mori://shinzui/shibuya` by the ADR written in Milestone 2.
+ADR 0001, recording the predicate, why retry ordering is exact under serial
+single-message processing, the same-batch limit and rebalance race, and that it depends on the core contract
+recorded in `mori://shinzui/shibuya` by the ADR written in Milestone 2. Cite that
+project together with the exact new ADR path while artifact URIs remain pending;
+use its canonical handle if ADR registration has been adopted.
 
 Mark BUG-2 fixed in
 `docs/bug-reports/2-buffered-successors-execute-before-a-retried-record.md`: set
@@ -674,20 +815,33 @@ entry, and validate.
 
 ### Milestone 5: verify from Hackage after the core release
 
-This milestone cannot start until `shibuya-core` 0.11.0.0 is published, which is a
+
+This milestone cannot start until `shibuya-core` 0.12.0.0 is published, which is a
 release the repository owner performs. Leave its Progress item unchecked and say so in
 Outcomes & Retrospective if the plan is otherwise complete.
 
-When the release exists, restore `cabal.project.local` to its comment-only content,
+When the feature-bearing release exists, remove only this plan's package override
+and restore the file's recorded previous contents or absence,
 run `cabal update`, build everything, and run the suite. The build plan must show
-`shibuya-core-0.11.0.0` coming from Hackage rather than from `../shibuya`.
+`shibuya-core-0.12.0.0` coming from Hackage rather than from `../shibuya`.
 
 
 ## Concrete Steps
 
+
 ### In the shibuya repository
 
+
 Working directory: `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya`.
+
+Verify the release frontier before choosing a candidate. At review both registries
+and the upstream tags ended at 0.11.0.0; 0.12.0.0 is the planned feature release.
+
+```bash
+curl -fsSL -H 'Accept: application/json' https://hackage.haskell.org/package/shibuya-core/preferred
+curl -fsSL -H 'Accept: application/json' https://hackage.haskell.org/package/shibuya-metrics/preferred
+git ls-remote --tags https://github.com/shinzui/shibuya.git
+```
 
 Capture the benchmark baseline on the unchanged tree, before Milestone 1's edits.
 
@@ -701,18 +855,14 @@ Run the core suite.
 nix develop -c bash -c 'cabal test shibuya-core:test:shibuya-core-test --enable-tests'
 ```
 
-On the unchanged tree it ends as follows; after Milestone 1 the example count is
-higher by the number of tests added and failures stay at zero.
-
-```text
-236 examples, 0 failures
-Test suite shibuya-core-test: PASS
-```
+Require `Test suite shibuya-core-test: PASS` and zero failures. Record the current
+example count from the run; the September prototype's count of 236 is historical,
+not the current baseline.
 
 Run all core suites and the metrics suite before committing.
 
 ```bash
-nix develop -c bash -c "cabal build all --constraint='crypton <2.1.3' && cabal test shibuya-core --constraint='crypton <2.1.3' && cabal test shibuya-metrics --constraint='crypton <2.1.3'"
+nix develop -c bash -c "cabal build all --enable-benchmarks && cabal test shibuya-core && cabal test shibuya-metrics"
 ```
 
 Compare against the baseline after Milestone 1.
@@ -725,11 +875,12 @@ nix develop -c bash -c 'cabal bench shibuya-core-bench --benchmark-option=--base
 `shibuya-core-bench/delivery-status-baseline.csv`. Delete it when the comparison is
 recorded; it must not be committed.
 
-Commit in the shibuya repository with the cross-repository trailer.
+Stage only the intended files, explicitly adding new ones, and commit in
+`mori://shinzui/shibuya` with the cross-repository trailer.
 
 ```bash
 nix fmt
-git add -A
+git add -p
 git commit
 ```
 
@@ -743,6 +894,7 @@ Intention: intention_01m3sbterne78sx93pm5d6qf66
 ```
 
 ### In this repository
+
 
 Working directory: `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya-kafka-adapter`.
 
@@ -762,7 +914,14 @@ python3 -c 'import json; print([(u["pkg-version"], u["style"]) for u in json.loa
 ```
 
 ```text
-[('0.11.0.0', 'local')]
+[('0.12.0.0', 'local')]
+```
+
+Run broker-free checks before live tests. This command currently runs 40 tests;
+plan 16 and this plan add more. It does not certify live acceptance.
+
+```bash
+nix develop -c bash -c 'cabal test shibuya-kafka-adapter --test-show-details=streaming --test-option=-p --test-option="!/Integration/"'
 ```
 
 Run the whole suite, and the new groups alone.
@@ -785,15 +944,13 @@ Run the suite ten times and build everything.
 
 ```bash
 nix develop -c bash -c 'for i in 1 2 3 4 5 6 7 8 9 10; do cabal test shibuya-kafka-adapter || exit 1; done'
-nix develop -c bash -c "cabal build all --constraint='crypton <2.1.3'"
+nix develop -c bash -c "cabal build all --enable-benchmarks"
 ```
 
-The constraint works around `crypton-2.1.3`, a dependency of the example package,
-which at the time of writing fails to compile with
-`fatal error: 'p256/p256_verify.h' file not found`. It is unrelated to this work; drop
-the constraint once the plain command succeeds. The same fault stops
-`cabal build all` in the shibuya repository, which is why its command above carries
-the same constraint; the constraint was only tried in this repository.
+The old September `crypton <2.1.3` workaround is removed. Plan 16's review already
+verified an unconstrained all-component build. If a new dependency failure occurs,
+use Mori source discovery, the authoritative registry, and upstream release tags
+before selecting a new workaround.
 
 Record and validate the capability and bug-report changes.
 
@@ -818,14 +975,19 @@ Intention: intention_01m3sbterne78sx93pm5d6qf66
 For Milestone 5, confirm the release exists before removing the override.
 
 ```bash
-curl -s -H 'Accept: application/json' https://hackage.haskell.org/package/shibuya-core/preferred
+curl -fsSL -H 'Accept: application/json' https://hackage.haskell.org/package/shibuya-core/preferred
 ```
 
-The `normal-version` list must contain `0.11.0.0`. After the override is removed and
-`cabal update` has run, the plan check above must print `global` instead of `local`.
+The `normal-version` list must contain the selected feature-bearing version. Check
+its upstream tag and source/API as well: a version string alone does not prove the
+field exists. After removing the override, run `nix develop -c cabal update` and
+rebuild/test. Inspect `dist-newstyle/cache/plan.json`: the core unit must have the
+selected version, `style: "global"`, and `pkg-src.type: "repo-tar"` rather than a
+local path or source-repository checkout. Confirm its repository is Hackage.
 
 
 ## Validation and Acceptance
+
 
 In `shibuya-core`, the new tests show that the handler and the finalizer are not
 called for a superseded delivery, that the status is read at handler time rather than
@@ -836,14 +998,14 @@ did. The benchmark comparison reports no benchmark more than ten percent slower 
 rise in allocation per message.
 
 In the adapter, the scripted test shows handler order `0,1,2,3,4,4,5,...,11` with all
-twelve offsets stored. With only the adapter change reverted it shows
-`0..11, 4, 5..11`. The live test shows the same order against Redpanda. The second
+twelve offsets stored. With only its status action forced to `DeliveryCurrent` and
+plan 16 retained it shows `0..11, 4, 5..11`. The live test shows the same order against Redpanda. The second
 scripted test shows `0,1,2,3,4,4,4,5,...,11`: a record that fails twice still blocks
 its successors, and they run once.
 
-The delivery-status tests show each branch of the predicate, including that a
-redelivered successor becomes current once the barrier clears, and that deliveries
-from a revoked assignment are superseded.
+The delivery-status tests show each branch of the predicate, including current
+redelivered successors, old-token fencing after success or a missing-offset gap,
+partition isolation, and old-generation fencing through revoke/reassign.
 
 Every adapter test that existed before this plan passes, with two intended changes:
 the expected handler order in plan 16's two scripted tests, and the rewritten
@@ -853,31 +1015,37 @@ the expected handler order in plan 16's two scripted tests, and the rewritten
 tests from plan 16, must still pass unchanged in what they assert about stored and
 committed offsets.
 
-The suite passes ten times in a row and all three packages build.
+The suite passes ten times in a row and all three packages, including benchmark
+components, build. Core skip tests cover both basic and detailed metrics and the
+actual batch worker; status failure is observable as an infrastructure failure.
 
-Two limits are part of the accepted behaviour and must be stated in the
+These limits are part of the accepted behaviour and must be stated in the
 documentation. The guarantee is exact only under serial processing, which is the only
 mode the adapter supports; under concurrent processing a successor can be asked about
-before its predecessor's retry is recorded. And a batch handler still receives the
+before its predecessor's retry is recorded. A serial batch handler still receives the
 members of one batch together, so a successor in the same batch as the retried record
-is handled with it; successors in later batches are skipped.
+is handled with it; still-buffered successors in later batches are skipped. Rebalance
+fencing is checked at admission and does not cancel work admitted just before a
+revocation. Missing-offset recovery follows plan 16's explicit gap policy.
 
 
 ## Idempotence and Recovery
+
 
 Every step can be repeated. The tests create topics and groups with random prefixes
 and leave them on the shared broker, as the existing suite does. Benchmark CSV files
 are scratch output.
 
 The two repositories are changed in order. If work stops after Milestone 2, the
-shibuya repository holds an unreleased 0.11.0.0 candidate and this repository is
+shibuya repository holds an unreleased 0.12.0.0 candidate and this repository is
 untouched and still builds from Hackage. If work stops during Milestone 3 before the
-commit, restore `cabal.project.local` to its comment-only content and discard the
-working-tree changes to return to a buildable state.
+commit, restore only this plan's override using the saved contents/absence and
+revert only its own edits; preserve pre-existing user work.
 
 After the Milestone 3 commit and until Milestone 5, this repository builds only with
 the `cabal.project.local` override. A symptom of a missing override is a solver
-failure naming `shibuya-core ^>=0.11.0.0`. Recreate the file as shown in Milestone 3.
+failure naming `shibuya-core ^>=0.12.0.0`. Restore the package entry as shown in
+Milestone 3, preserving other local settings.
 
 If the core change has to be withdrawn, revert the Milestone 1 and 2 commits in the
 shibuya repository and the Milestone 3 and 4 commits here; plan 16's behaviour is
@@ -887,6 +1055,7 @@ Do not tag, publish, or release either package from this plan.
 
 
 ## Interfaces and Dependencies
+
 
 No new package dependency is added in either repository.
 
@@ -907,16 +1076,17 @@ mkIngested :: Envelope msg -> AckHandle es -> Ingested es msg
 ```
 
 `Shibuya.Internal.Runner.BatchProcessor.processOneBatch` keeps its name and type.
-`AckHandle`, `Adapter`, `Handler`, and `BatchHandler` are unchanged.
+`AckHandle`, `Adapter`, `Handler`, `BatchHandler`, `Message`, and `toMessage` are
+unchanged. The check remains framework-owned and is not exposed to handlers.
 
 At the end of Milestone 3, `Shibuya.Adapter.Kafka.Internal` still exports `mkAckHandle`
 and `mkIngested` with their current types. `ackHandleFor` and `deliveryStatusOf` are
 internal to the module. The public module `Shibuya.Adapter.Kafka` keeps its export
 list.
 
-The adapter's three cabal files require `shibuya-core ^>=0.11.0.0`.
+The adapter's three cabal files require `shibuya-core ^>=0.12.0.0`.
 
-Other consumers of `shibuya-core` are affected only when they move to 0.11.0.0. The
+Other consumers of `shibuya-core` are affected only when they move to 0.12.0.0. The
 two that build `Ingested` with record syntax, named in Surprises & Discoveries, need
 `deliveryStatus = pure DeliveryCurrent` added to that record. Consumers that only
 depend on the library need a bound change. That work belongs to those repositories.
@@ -926,3 +1096,11 @@ BUG-2 scenarios as known defects for adapter versions below a fixed bound. When 
 moves to a release containing this change it will need to update that bound and adapt
 to the `Shibuya.Adapter.Kafka.Internal` changes described in plan 16. That work
 belongs to that repository.
+
+
+Revision note (2026-10-26): reviewed the current core/adapter sources, relevant ADRs,
+plan 16, Hackage versions, and upstream tags. Advanced the candidate beyond the
+already-published core, moved batch admission to the shared worker, preserved
+detailed metrics ownership, replaced double status reads and scheduling assumptions,
+and strengthened finalization-based completion and recovery instructions. Prototype
+results remain historical; implementation and live acceptance remain outstanding.
