@@ -10,9 +10,27 @@ provenance:
     model: "claude-fable-5-1"
     harness: "claude-code"
     at: 2026-09-30T16:58:46Z
+  reviews:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T19:05:50Z
+      verdict: "changes-requested"
+      note: "Initial review: tighten timeout and finalization checks, qualify runtime and callback guarantees, correct commit timing and stale build workaround."
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T19:10:31Z
+      verdict: "approved"
+      note: "Re-review after update: source-grounded drain design, runtime caveats, completion-sensitive tests, and document checks are consistent; live acceptance remains an implementation obligation."
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-26T19:09:46Z
+      mode: "update"
+      note: "Correct runtime and callback guarantees, require successful finalization and cleanup in tests, strengthen drain lifecycle coverage, and refresh build and commit-visibility guidance."
 ---
 
 # Drain the consumer queue without blocking under the consumer lock
+
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
@@ -20,6 +38,7 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 
 ## Purpose / Big Picture
+
 
 An application that consumes Kafka through `shibuya-kafka-adapter` and the Shibuya
 runner currently handles about three records per second once it has caught up with
@@ -34,40 +53,41 @@ lock, and the thread that polls for records holds that lock while it waits insid
 client library for records to arrive. Marking a record as done needs the same lock, so
 each record waits for one whole poll, about 0.3 seconds.
 
-After this plan the lock is still taken around every consumer call, exactly as today,
-but the adapter never waits inside the client library while holding it. It takes
-whatever records are already in the local queue, releases the lock, and waits outside
-the lock when there is nothing to take. The same fifty records are handled in well
-under a second, and at twenty records per second the average wait is about 50
-milliseconds.
+After this plan the existing consumer-lock boundaries remain. On the threaded
+runtime, the source requests records with a zero timeout, releases the lock, and
+waits outside the lock when it gets no records. The non-threaded runtime retains
+its existing blocking batch poll. Zero timeout removes waiting for record arrival;
+it is not a wall-clock bound on decoding records, running synchronous callbacks,
+or other consumer operations such as seek and commit. The planning prototype
+handled the same fifty records in well under a second and measured about 50 ms mean
+latency at twenty records per second; implementation must re-measure these results.
 
 You can see it working with two new broker-free tests that fail on the current code
 and pass afterwards, a live test against Redpanda, and the reproduction in the bug
 report: after producing fifty records to a caught-up example consumer, the group's lag
-returns to zero at the next automatic commit instead of eighteen seconds later.
+returns to zero promptly after finalization instead of eighteen seconds later.
 
 
 ## Progress
 
-- [ ] Milestone 1: add or confirm the shared broker-free log
-  `shibuya-kafka-adapter/test/Kafka/ScriptedLog.hs`.
-- [ ] Milestone 1: add the non-threaded test suite and confirm it passes on the
-  unchanged code.
-- [ ] Milestone 1: write the two scripted source tests and the live latency test, and
-  record their failing output on the unchanged code.
-- [ ] Milestone 2: add `drainQueue` and the idle wait, and select the poll path by
-  runtime in `kafkaSource`.
-- [ ] Milestone 2: add the ordering, fatal-error, and synchronous-mode tests; the
-  whole suite and the non-threaded suite pass.
-- [ ] Milestone 3: ten consecutive suite runs pass; all packages build.
-- [ ] Milestone 3: bug-report reproduction and idle CPU re-measured and recorded.
-- [ ] Milestone 4: module documentation, configuration documentation, README files,
-  the CAP-1 capability record, and the changelog updated.
-- [ ] Milestone 4: ADR written; BUG-7 marked fixed; the upstream-issues entry moved
-  to `Workaround`.
+
+- [ ] Milestone 1: broker-free characterization tests demonstrate the defect, and
+  the non-threaded direct-stream compatibility test passes on unchanged code.
+- [ ] Milestone 2: the drain and idle wait pass latency, ordering, error, shutdown,
+  callback-mode, and non-threaded compatibility tests.
+- [ ] Milestone 3: ten threaded suite runs and both runtime suites pass; all packages
+  build; BUG-7 reproduction and idle CPU meet the measured acceptance criteria.
+- [ ] Milestone 4: documentation, ADR, CAP-1, BUG-7, changelog, and upstream issue
+  agree with the verified runtime behavior and their validation commands pass.
+
+Review handoff (2026-10-26): this is a plan-only revision. No implementation
+milestone is complete. The September figures below are historical prototype evidence,
+not measurements of this checkout. The review's broker metadata request timed out,
+so live acceptance must be performed during implementation.
 
 
 ## Surprises & Discoveries
+
 
 - 2026-09-30 (planning): timing the consumer lock in an instrumented build of the
   unchanged 0.9.1.0 source showed the whole delay is lock waiting. Fifty records, no
@@ -129,14 +149,33 @@ returns to zero at the next automatic commit instead of eighteen seconds later.
   The prototype consumed twenty records in that mode. The change makes a configuration
   work that used to be rejected.
 
-- 2026-09-30 (planning): `cabal build all` currently fails while compiling
+- 2026-09-30 (planning, historical): `cabal build all` failed while compiling
   `crypton-2.1.3`, a dependency of the example package, with
   `fatal error: 'p256/p256_verify.h' file not found`. This is a fault in that
   upstream release and has nothing to do with this work. Adding
-  `--constraint='crypton <2.1.3'` to the cabal command avoids it.
+  `--constraint='crypton <2.1.3'` avoided it for that run. Do not apply this
+  historical workaround automatically: the 2026-10-26 review checked Hackage's
+  version registry and upstream tags for `mori://kazu-yamamoto/crypton`: Hackage
+  includes 2.2.5 and marks 2.1.3 deprecated, and upstream has `crypton-v2.2.5`. The local cached build plan selects 2.1.2; that is not evidence
+  that a fresh unconstrained build still needs the old workaround.
+
+- 2026-10-26 (review): the two proposed scripted test bodies discarded both the
+  outer timeout and the inner Kafka error result. They could pass after shutdown
+  timed out, and timing handler entry did not include the last finalizer. The
+  revised tests require successful completion, successful graceful shutdown,
+  exact delivery/store counts, and timing through the final successful store.
+
+- 2026-10-26 (review): the current package is 0.10.0.0 and requires shibuya-core
+  0.11.0.0. The cached solver plan selects hw-kafka-client 5.3.0 and kafka-effectful
+  0.3.1.0. Hackage and upstream tag `v5.3.0` agree on the released client version.
+  Dependency source confirms that asynchronous single-record polls avoid the
+  callback mutex, whereas synchronous polls call `rd_kafka_consumer_poll` and
+  execute callbacks inline. Runtime choice alone does not promise a short lock
+  hold for arbitrary user callbacks.
 
 
 ## Decision Log
+
 
 - Decision: keep the consumer lock around every consumer call.
   Rationale: directed by the repository owner on 2026-09-30. The lock was added in
@@ -150,16 +189,19 @@ returns to zero at the next automatic commit instead of eighteen seconds later.
 
 - Decision: take records with zero-timeout single-record polls under the lock, up to
   `batchSize` per lock acquisition, and wait outside the lock when none are available.
-  Rationale: the lock is then held for microseconds, so a store never waits on a
-  poll. Single-record `pollMessage` avoids the 206 ms that `pollMessageBatch` spends
+  Rationale: this removes the idle arrival wait from the lock hold. A store can
+  still wait for a bounded number of record decodes or synchronous callbacks;
+  microsecond holds are a prototype observation, not an API guarantee.
+  Single-record `pollMessage` avoids the roughly 206 ms that `pollMessageBatch` spent
   behind `hw-kafka-client`'s background loop, which a zero-timeout batch poll would
   still pay.
   Date: 2026-09-30
 
 - Decision: wait 10 ms when the queue is empty, or `pollTimeout` if that is smaller,
   and never less than 1 ms.
-  Rationale: measured. Ten milliseconds adds at most that much to the time a new
-  record waits and costs about 0.9% of one core when idle, against 0.19% today. The
+  Rationale: measured. Ten milliseconds is the requested idle sleep, not a hard
+  latency bound (scheduler and callback delays can add time). The prototype cost
+  about 0.9% of one core when idle, against 0.19% before the change. The
   default `pollTimeout` of 1000 ms would be far too long a wait, so the configured
   value can only shorten the wait, not lengthen it. A floor of 1 ms prevents a
   zero timeout from becoming a busy loop.
@@ -174,8 +216,12 @@ returns to zero at the next automatic commit instead of eighteen seconds later.
   Date: 2026-09-30
 
 - Decision: accept that the synchronous callback poll mode now works, and test it.
-  Rationale: rejecting it again would need the same internals. It is a configuration
-  that used to fail at the first poll, so nobody can be relying on the failure.
+  Rationale: rejecting it again would need the same internals. On the threaded
+  runtime it no longer fails at the first batch poll. Its callbacks run inside
+  the source's consumer-lock section; callbacks must not re-enter that lock and
+  must return promptly for low latency. The non-threaded fallback continues to
+  reject this mode. Test threaded synchronous consumption, including the adapter's
+  rebalance helper; do not promise support for arbitrary blocking callbacks.
   Date: 2026-09-30
 
 - Decision: do not change `hw-kafka-client` in this plan.
@@ -200,13 +246,23 @@ returns to zero at the next automatic commit instead of eighteen seconds later.
   `Unreleased` section into the version it creates.
   Date: 2026-09-30
 
+- Decision: measure completion through finalization and keep commit visibility
+  separate from handler latency. Treat the old crypton constraint as historical.
+  Rationale: discarded timeout results and handler-only timing can hide a stuck
+  finalizer; a periodic commit can occur before the final record is stored. Neither
+  test should report success from partial progress. Registry and tag checks no longer
+  justify imposing the September build workaround on every command.
+  Date: 2026-10-26
+
 
 ## Outcomes & Retrospective
+
 
 (To be filled during and after implementation.)
 
 
 ## Context and Orientation
+
 
 This repository publishes one Haskell library, `shibuya-kafka-adapter`, in the
 directory of the same name. Two sibling packages are listed beside it in
@@ -216,6 +272,7 @@ consumer into the `Adapter` value that the Shibuya queue-processing framework
 (`shibuya-core`, in `mori://shinzui/shibuya`) runs.
 
 ### Terms
+
 
 A Kafka topic is split into partitions, each an ordered log of records with increasing
 offsets. A consumer polls to read records. The Kafka client library used here is
@@ -240,13 +297,18 @@ is `True` exactly on the threaded runtime.
 
 ### The code as it is
 
-Everything this plan changes is in
-`shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`.
+
+The runtime change is confined to
+`shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`; tests, package test
+configuration, and documentation also change as described below.
 
 `KafkaAdapterState` holds `consumerLock`, an `MVar ()` used as a mutex.
-`withConsumerLock` takes and releases it around an action. Every consumer call goes
-through it: the poll in `kafkaSource`, the offset store in `storeGuarded`, the seek and
-the pause in `finalizeAttempt`, and the commit in the adapter's `shutdown`.
+`withConsumerLock` takes and releases it around an action. Each consumer operation
+from the source/finalizer paths goes through it: the poll in `kafkaSource`, the
+offset store in `storeGuarded`, the seek and the pause in `finalizeAttempt`, and
+the commit in the adapter's `shutdown`. This mutex does not serialize the
+client's own background callback thread; preserve the existing callback and
+assignment-fencing behavior described in ADR 0001.
 
 `kafkaSource` builds the stream of records.
 
@@ -282,6 +344,7 @@ call", default 1000 ms), and `batchSize` (default 100).
 
 ### Why a store waits 0.3 seconds
 
+
 When the inbox has room, the ingester finishes emitting a batch and polls again at
 once. With nothing to read, that poll waits inside librdkafka for its full timeout
 while holding `consumerLock`. The processor finishes a handler and tries to store the
@@ -293,12 +356,23 @@ The poll lasts about 309 ms, not 100, because of `hw-kafka-client`. In its defau
 mode that library starts a background thread that calls `rd_kafka_consumer_poll` with
 a 100 ms timeout in a loop, to serve group events such as partition assignment, and
 holds an internal lock while it does. `pollMessageBatch` takes that same internal lock
-twice, and each time it waits for one background poll to finish. The single-record
-`pollMessage` reads the local queue directly and does not take it. `kafka-effectful`
+twice, and each time it waits for one background poll to finish. In asynchronous
+callback mode, single-record
+`pollMessage` reads the local queue directly and does not take it. In synchronous
+mode it instead calls `rd_kafka_consumer_poll`, which also serves callbacks.
+`kafka-effectful`
 exposes the single-record poll as `pollMessageEither`, which returns the `Left` for a
 timeout instead of throwing.
 
+Dependency behavior was checked through Mori-discovered source in
+`mori://shinzui/kafka-effectful`, `mori://haskell-works/hw-kafka-client`,
+`mori://shinzui/hw-kafka-client`, and `mori://shinzui/shibuya`. The cached solver
+uses the Hackage client release, not a fork pin. Registry metadata for a maintained
+fork is not evidence that this checkout builds that fork. Recheck actual solver
+inputs before interpreting live results.
+
 ### Earlier decisions that constrain this work
+
 
 [`docs/adr/0001-fence-acknowledgements-by-delivery-and-assignment.md`](../adr/0001-fence-acknowledgements-by-delivery-and-assignment.md)
 records how retries and stores are fenced. It is unaffected; this plan does not touch
@@ -310,6 +384,7 @@ the commit `65139f5` ("serialize consumer access and bound poll for runApp") and
 
 ### Relation to plans 16 and 17
 
+
 This plan does not depend on
 `docs/plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md`
 or on plan 17, and they do not depend on it. They may be implemented in any order. Two
@@ -319,21 +394,25 @@ stamp on each polled record.
 
 ### Tooling facts
 
+
 Tests live in `shibuya-kafka-adapter/test` and use `tasty` with `tasty-hunit`.
 `test/Main.hs` lists the test modules. Live tests talk to a broker at `127.0.0.1:9092`
 through helpers in `test/Kafka/TestEnv.hs`, which create a topic and consumer group
 with a random prefix per test.
 
 Cabal must run inside the project's Nix development shell, because librdkafka comes
-from it; every command is written as `nix develop -c bash -c '...'`. The broker is a
-shared Redpanda cluster already running on the development machine. Check it with
+from it; every command is written as `nix develop -c bash -c '...'`. Live acceptance requires a
+shared Redpanda cluster on the development machine. Do not assume it is reachable;
+the 2026-10-26 review's metadata request timed out. Check it with
 `rpk cluster info -X brokers=127.0.0.1:9092` and start it with `redpanda-up` if it is
 down. `nix fmt` must be run before every commit.
 
 
 ## Plan of Work
 
+
 ### The design in one place
+
 
 On the threaded runtime, one step of the source does the following.
 
@@ -345,8 +424,10 @@ On the threaded runtime, one step of the source does the following.
 3. Release the lock.
 4. If nothing was collected, sleep for the idle wait, outside the lock.
 
-Nothing else changes. The lock is still taken for every poll, store, seek, pause, and
-commit. The records still flow through `skipNonFatal` and the later stages. The fatal
+Existing adapter lock boundaries stay around poll, store, seek, pause, and
+shutdown commit. This is a zero-timeout polling policy on the threaded runtime,
+not a guarantee that every consumer operation or callback completes immediately.
+The records still flow through `skipNonFatal` and the later stages. The fatal
 slot and the shutdown flag are still checked before every step.
 
 On the non-threaded runtime the step is what it is today: one `pollMessageBatch` with
@@ -356,6 +437,7 @@ The idle wait is `max 1 (min 10 t)` milliseconds, where `t` is the configured
 `pollTimeout`. The retry seek keeps using `boundedLockTimeout config.pollTimeout`.
 
 ### Milestone 1: characterize the defect and protect the non-threaded path
+
 
 This milestone changes no library code. At its end the repository has the broker-free
 log helper, a test suite that runs on the non-threaded runtime, and recorded evidence
@@ -495,82 +577,70 @@ shibuya-kafka-adapter` runs both suites.
 
 Create `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourcePollTest.hs`, add it to
 the threaded suite's `other-modules`, and add its `tests` to `test/Main.hs`. Its group
-is named `Source poll`. The two bodies below were run during planning as a standalone
-program; turn each returned `Bool` into `tasty-hunit` assertions on the same values.
-They share this configuration, whose 100 ms `pollTimeout` is what makes the scripted
-log behave like a real idle poll on the unchanged code.
+is named `Source poll`. Assert `rtsSupportsBoundThreads` is `True`. Use this
+configuration for the two characterization cases:
 
 ```haskell
 config :: KafkaAdapterConfig
 config = KafkaAdapterConfig {topics = [scriptedTopic], pollTimeout = Timeout 100, batchSize = BatchSize 100}
-
--- | Fifty records, trivial handler: how long between first and last handler call?
-caughtUp :: IO Bool
-caughtUp = do
-  scripted <- newScriptedLog 50
-  stamps <- newIORef ([] :: [Double])
-  let reachedLogEnd = elem (49 :: Int64) <$> readIORef scripted.stored
-      waitUntil :: Int -> IO Bool -> IO ()
-      waitUntil n check
-        | n <= 0 = pure ()
-        | otherwise = do
-            done <- check
-            unless done (threadDelay 10000 >> waitUntil (n - 1) check)
-  _ <-
-    timeout 60000000 $
-      runEff . runErrorNoCallStack @KafkaError . runScriptedConsumer scripted . runTracingNoop $ do
-        adapter <- kafkaAdapter config
-        let handler _ = do
-              liftIO $ getMonotonicTime >>= \now -> modifyIORef' stamps (<> [now])
-              pure AckOk
-        appResult <- runApp defaultAppConfig [(ProcessorId "scripted-caught-up", mkProcessor adapter handler)]
-        case appResult of
-          Left appError -> error ("runApp failed: " <> show appError)
-          Right appHandle -> do
-            liftIO $ waitUntil 3000 reachedLogEnd
-            stopApp appHandle
-  times <- readIORef stamps
-  storedOffsets <- readIORef scripted.stored
-  let spanSeconds = case times of
-        first : _ -> last times - first
-        [] -> -1
-  pure (storedOffsets == [0 .. 49] && spanSeconds >= 0 && spanSeconds < 1)
-
--- | An adapter with nothing to read: what does it ask the client to do?
-idle :: IO Bool
-idle = do
-  scripted <- newScriptedLog 0
-  _ <-
-    timeout 30000000 $
-      runEff . runErrorNoCallStack @KafkaError . runScriptedConsumer scripted . runTracingNoop $ do
-        adapter <- kafkaAdapter config
-        appResult <- runApp defaultAppConfig [(ProcessorId "scripted-idle", mkProcessor adapter (\_ -> pure AckOk))]
-        case appResult of
-          Left appError -> error ("runApp failed: " <> show appError)
-          Right appHandle -> do
-            liftIO $ threadDelay 1000000
-            stopApp appHandle
-  timeouts <- readIORef scripted.polls
-  let blocking = filter (> 0) timeouts
-  pure (null blocking && length timeouts >= 20 && length timeouts <= 250)
 ```
 
-Name the cases `caught-up source does not delay finalization (scripted log)` and
-`idle source never waits inside the client (scripted log)`. `getMonotonicTime` is from
-`GHC.Clock`. The first case fails on the unchanged code with a span of about five
-seconds, one 100 ms poll per record. The second fails with ten polls in the second,
-every one with a non-zero timeout. The bounds of 20 and 250 polls per second bracket
-the expected hundred: fewer means the idle wait is too long, more means it is too
-short or missing.
+Both cases use `runEff . runErrorNoCallStack @KafkaError . runScriptedConsumer
+scripted . runTracingNoop`, `kafkaAdapter config`, and the real `runApp` with
+`defaultAppConfig`. Unlike the original planning prototypes, assert the outer
+`System.Timeout.timeout` result is `Just` and the inner effect result is `Right`.
+Fail on `runApp` returning `Left`. Use `stopAppGracefully defaultShutdownConfig`
+and assert its result is `True`; `stopApp` discards that result. Arrange cleanup
+with `Effectful.Exception.finally` once an app handle exists so a failed assertion
+or cancelled wait cannot leave the runner using an escaped interpreter or consumer.
+Use a bounded STM/MVar wait whose expiry fails the test, not a polling loop that
+silently returns when its counter expires. Every new direct-stream test also
+needs an outer deadline whose expiry fails, including the fatal-error case.
 
-Add a live test to `test/Shibuya/Adapter/Kafka/IntegrationTest.hs` named
-`caught-up consumer finalizes promptly`. It produces thirty payloads to a
-one-partition topic, runs `kafkaAdapter` under `runApp` with a handler that records
-`getMonotonicTime` and returns `AckOk`, waits until thirty handler calls have been
-recorded, calls `stopApp`, and asserts the time between the first and the last call is
-under three seconds. Follow `testHandlerExceptionRedelivery` for the effect stack, and
-wrap the session in a sixty-second `timeout`. On the unchanged code the span is about
-nine seconds.
+For `caught-up source does not delay finalization (scripted log)`, use fifty
+scripted records and an infinite adapter source; truncating the source at fifty
+would remove the idle polls that reproduce the defect. Record handler-entry times
+with `GHC.Clock.getMonotonicTime`, and decorate each source record's `AckHandle`
+so it calls the original finalizer before recording successful completion. The
+completion of offset 49 signals an MVar with its timestamp. Wait up to thirty
+seconds for it before stopping the app; bound the whole session at sixty seconds.
+Assert fifty handler calls in offset order, exactly `[0 .. 49]` in `stored`, and
+less than one second from first handler entry to the successful completion of
+finalizer 49. Report handler span separately as diagnostic data. Keep shared
+observations atomic or publish them through STM/MVar before reading them.
+
+Coordinate the first handler with the ingester reaching its first empty poll,
+using a test-local signal in the interpreter's empty branch for both poll variants.
+This ensures that finalization competes with an active idle source instead of
+winning a scheduler race before ingestion begins polling again. Do not block the
+poll waiting for a finalizer that needs its lock. Keep this instrumentation local
+to the test or make any helper extension optional so plan 16's callers still work.
+The unchanged code should fail the latency bound (historically about five seconds).
+If it passes, investigate the schedule before treating the test as characterization.
+
+For `idle source never waits inside the client (scripted log)`, use an empty log.
+Wait for its first poll, take a poll-count snapshot, observe for one measured second,
+and take another snapshot before shutdown. Check only polls in that interval:
+all requested timeouts must be zero and the count must be between 20 and 250.
+Record the actual monotonic interval alongside the count; reject a materially
+stretched interval instead of counting shutdown time as idle activity. The unchanged
+code historically makes about ten polls, all requesting 100 ms. This verifies
+both the absence of blocking requests and the presence of the idle sleep.
+
+Add `caught-up consumer finalizes promptly` to
+`shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/IntegrationTest.hs`. Create a
+one-partition topic and run the infinite source under `runApp`. Produce and
+successfully finalize a distinct warm-up record first, establishing assignment
+and an exhausted input, then produce thirty distinct measured payloads. Decorate
+the source's acknowledgement handles as above to signal completion only after
+the original finalizer returns. Wait for all thirty successful finalizations
+before shutdown, assert the exact measured payload sequence and count, and assert
+less than three seconds from first measured handler entry to last measured
+finalizer completion. Follow `testHandlerExceptionRedelivery` for the live effect
+stack, but retain the infinite source and use the explicit completion/error/cleanup
+checks above. Bound the entire session at sixty seconds. The unchanged code's
+historical handler span was about nine seconds; re-measure the stronger finalization
+criterion rather than copying that figure as new evidence.
 
 Run the three new tests on the unchanged code and paste their failing output into
 Surprises & Discoveries. Commit the helper module and the non-threaded suite, which
@@ -578,6 +648,7 @@ pass. Keep the three failing tests in the working tree and commit them with the 
 Milestone 2, so that no commit has a failing suite.
 
 ### Milestone 2: drain without blocking
+
 
 All library edits are in
 `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs`. At the end of this
@@ -642,32 +713,64 @@ the same `withConsumerLock` section, and do the idle wait after the section ends
 combination was prototyped, and both of plan 16's scripted retry schedules gave the
 results that plan records.
 
-Add three tests.
+Add the following regression tests. These protect the changed source behavior;
+all must have explicit deadlines and assert full successful completion.
 
 In `SourcePollTest.hs`, `source yields every record in order across drains (scripted
 log)`: a scripted log of 250 records and `batchSize = BatchSize 100`. Read
 `Stream.take 250` of the adapter's `source` directly, finalize each record with
 `AckOk`, and assert the envelope cursors are 0 through 249 in order and that `stored`
-is `[0 .. 249]`.
+is `[0 .. 249]`. Also drive the internal `kafkaSource` just far enough to
+obtain its first element and inspect the interpreter's consumed position: it must
+be 100, not 250. This catches an implementation that drains an unbounded backlog
+before yielding, which the ordering assertion alone would miss. Repeat the ordered
+consumption check with `batchSize = BatchSize 1`.
 
 In `SourcePollTest.hs`, `fatal poll error ends the stream`: a small local interpreter
 of `KafkaConsumer`, in the style of `runMockConsumer` in `AckHandleTest.hs`, whose
 `PollMessageEither` returns `Left KafkaBadConfiguration` and whose `Subscription`
 returns an empty list. Drain the adapter's `source` under
 `runErrorNoCallStack @KafkaError` and assert the result is
-`Left KafkaBadConfiguration`.
+`Left KafkaBadConfiguration`. Add a second script returning two records,
+then that fatal error, then a sentinel record. Assert the first two records were
+emitted in order before failure and that no poll consumed the sentinel. Add a
+nonfatal script with record, partition EOF, record, timeout; the two records must
+both be emitted in order across separate drains. Do not conflate a nonfatal
+condition with permanent end of stream.
+
+In `SourcePollTest.hs`, drive an empty source in a worker, wait until a zero-timeout
+poll has returned, then set `shutdownVar` and require prompt stream completion
+(with a one-second scheduling allowance). Repeat with `fatalError` set to
+`Just KafkaBadConfiguration` and require that error. These protect the existing
+per-step checks across the new idle wait. Use `kafkaAdapterWith` and shared state,
+and ensure the worker is cancelled/joined on test failure. Repeat the idle
+observation with configured `Timeout 0`: all poll requests remain zero, at least
+one further poll occurs, and no more than 2000 polls occur in a one-second window.
+This broad bound catches a missing sleep floor without asserting exact scheduler
+timing. Repeat the ordinary 20–250 poll bound with default `Timeout 1000` to catch
+accidentally sleeping for the full configured second.
 
 In `IntegrationTest.hs`, `consumes with the synchronous callback poll mode`: the same
 consumer properties as the other live tests with
 `<> callbackPollMode CallbackPollModeSync` appended, both names exported by
 `Kafka.Effectful.Consumer` in `kafka-effectful` 0.3.1.0. Produce twenty payloads, read `Stream.take 20` of the
-source, finalize each with `AckOk`, and assert twenty were received.
+source, finalize each with `AckOk`, and assert the exact twenty payloads and
+cursor order. Use shared state with `kafkaRebalanceHandler` installed before consumer
+creation and record the assignment callback, proving callbacks are served as well
+as records delivered. Append `callbackPollMode CallbackPollModeSync` last because
+consumer properties are right-biased. Run this only on the threaded suite; keep
+an explicit non-threaded sync-mode rejection test in `test/Unthreaded.hs`: construct
+a sync consumer, pull its source under `runErrorNoCallStack`, and require
+`KafkaBadSpecification` mentioning `pollMessageBatch`, not a timeout or native crash.
+Callbacks must not acquire `consumerLock` recursively. A zero timeout does not constrain arbitrary
+callback execution time.
 
 Run both suites. Everything that existed before this plan, the three characterization
-tests, and the three tests above must pass. Commit the library change and the tests
+tests, and the regression cases above must pass. Commit the library change and the tests
 together.
 
 ### Milestone 3: prove nothing regressed
+
 
 Run the threaded suite ten times in a row. The change alters how the ingester and the
 processor interleave, and repeated runs are the practical check that no existing test
@@ -680,30 +783,40 @@ Build all three packages.
 
 Repeat the reproduction from BUG-7 with the example consumer, as shown in Concrete
 Steps, and record the sampled committed offsets in Surprises & Discoveries. Lag must
-reach zero at the first automatic commit after the records are produced.
+reach zero promptly while the consumer remains running. A commit tick may occur
+before the last offset is stored, so do not require the first tick after production
+to contain the whole burst. Use the visibility deadline in Concrete Steps.
 
 Measure idle CPU with the example consumer, as shown in Concrete Steps. It must be
 under 1.5 seconds of CPU per minute. The prototype used about 0.54.
 
 ### Milestone 4: documentation and records
 
+
 In `Shibuya.Adapter.Kafka.Internal`, rewrite three comments so they describe the code.
 The comment on `consumerLock` says each poll is bounded so the lock is released
-frequently; say instead that the source only takes records that are already queued
-while holding it. The comment on `maxPollHoldMillis` describes capping the poll; it now
+frequently; say instead that threaded source polls request zero timeout and take at most
+`batchSize` records while holding it. Mention the non-threaded fallback and that
+synchronous callbacks execute inline under the lock. The comment on
+`maxPollHoldMillis` describes capping the poll; it now
 bounds only the retry seek on the threaded runtime, and the poll too on the
 non-threaded one. The haddock on `kafkaSource` should describe the drain, the idle
 wait, and the non-threaded fallback.
 
 In `Shibuya.Adapter.Kafka.Config`, change the documentation of `pollTimeout` to say
 that it bounds the retry seek, capped at 100 ms, and how long the source waits before
-looking for records again when none are queued, capped at 10 ms and never below 1 ms.
+looking for records again when none are queued on the threaded runtime, capped
+at 10 ms and never below 1 ms. On the non-threaded runtime it remains the batch-poll
+timeout capped at 100 ms; this plan does not change seek timeout normalization.
+Avoid promising a wall-clock bound on a poll, seek, or callback.
 Change the documentation of `batchSize` to say it is the most records taken under one
 hold of the consumer lock. Update the `Defaults` list on `defaultConfig` to match.
 
 In `shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka.hs`, the `Message Lifecycle`
 section says messages are polled in batches; add that a batch is whatever is already
-queued, up to `batchSize`. Search both README files and
+queued, up to `batchSize`, on the threaded runtime. Describe the non-threaded
+fallback separately and document the synchronous callback restrictions. Search
+`README.md`, `shibuya-kafka-adapter/README.md`, and
 `docs/capabilities/kafka-message-source.md` (CAP-1) for `pollTimeout` and correct each
 statement; CAP-1 says `defaultConfig` "polls with a 1000 ms timeout". Add the new
 tests to CAP-1's `evidence`, update its `generated`, add a log entry, and validate.
@@ -712,14 +825,18 @@ Add an `Unreleased` section at the top of `shibuya-kafka-adapter/CHANGELOG.md`, 
 extend it if present, with a `Bug Fixes` entry for the latency fix that gives the
 before and after figures, and an `Other Changes` entry stating the new meaning of
 `pollTimeout`, the idle CPU cost, and that the synchronous callback poll mode now
-works.
+works on the threaded runtime with prompt, non-reentrant callbacks.
 
 Write an ADR in `docs/adr/`, numbered with the next unused four-digit number and named
 `NNNN-never-wait-in-the-client-while-holding-the-consumer-lock.md`, in the plain format
 of ADR 0001 (title, Status, Date, Context, Decision, Consequences, Evidence). Record
-that the lock stays, that the source must not block inside the client while holding
+that the lock stays, that threaded source polls request zero timeout and idle waits
+happen outside
 it, why `pollMessageBatch` is avoided on the threaded runtime and kept on the
-non-threaded one, and the idle-wait trade-off with its measurements.
+non-threaded one, and the idle-wait trade-off with its measurements. The review
+confirmed that `mori.dhall` does not currently register `docs/adr` as a profiled
+bundle; if that changes before implementation, use the profile's handle allocation
+and strict validation workflow instead of assuming the current plain-file format.
 
 In `mori/upstream-issues.dhall`, change the entry
 `hw-kafka-client-no-queue-event-binding` from `IssueStatus.Active` to
@@ -735,6 +852,7 @@ set `status: fixed`, add `fixedVersion: "unreleased"` after `affectedVersion`, a
 
 
 ## Concrete Steps
+
 
 All commands run from the repository root,
 `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya-kafka-adapter`.
@@ -753,7 +871,8 @@ nix develop -c bash -c 'cabal test shibuya-kafka-adapter:test:shibuya-kafka-adap
 nix develop -c bash -c 'cabal test shibuya-kafka-adapter:test:shibuya-kafka-adapter-unthreaded-test --test-show-details=streaming'
 ```
 
-Before this plan the threaded suite ends as follows.
+The September planning baseline ended as follows; record the current suite count
+and result rather than treating this historical transcript as a fresh check.
 
 ```text
 All 53 tests passed (10.91s)
@@ -773,18 +892,21 @@ Run the threaded suite ten times and stop at the first failure.
 nix develop -c bash -c 'for i in 1 2 3 4 5 6 7 8 9 10; do cabal test shibuya-kafka-adapter:test:shibuya-kafka-adapter-test || exit 1; done'
 ```
 
-Build everything. The constraint works around the broken `crypton` release described
-in Surprises & Discoveries; drop it once `cabal build all` succeeds without it.
+Build everything without imposing the historical crypton constraint.
 
 ```bash
-nix develop -c bash -c "cabal build all --constraint='crypton <2.1.3'"
+nix develop -c bash -c 'cabal build all'
 ```
+
+If dependency resolution or compilation fails, record the selected version and
+actual error. Check the authoritative registry and upstream release tags before
+choosing a workaround; do not pin an old release from the September transcript.
 
 Repeat the BUG-7 reproduction. Start the example consumer in one terminal.
 
 ```bash
 rpk topic create orders -p 1
-nix develop -c bash -c "cabal run basic-consumer --constraint='crypton <2.1.3'"
+nix develop -c bash -c 'cabal run basic-consumer'
 ```
 
 In a second terminal, wait for the group to be stable with no lag, produce fifty
@@ -793,7 +915,7 @@ records, and sample the group every two seconds.
 ```bash
 rpk group describe basic-consumer-group
 seq 1 50 | rpk topic produce orders
-for i in 1 2 3 4 5 6 7 8 9 10; do sleep 2; rpk group describe basic-consumer-group | grep '^orders'; done
+for i in 1 2 3 4 5 6 7 8 9 10; do sleep 2; rpk group describe basic-consumer-group | rg '^orders'; done
 ```
 
 On the unchanged code the committed offset, the third column, climbed in four steps
@@ -806,8 +928,13 @@ over eighteen seconds.
 +18s committed=200 log-end=200 lag=0
 ```
 
-After Milestone 2 it must reach the log end at the first automatic commit, within
-about six seconds. The prototype build of the example did.
+After Milestone 2 require lag zero within two configured auto-commit intervals
+plus one sampling interval after producer completion, without stopping the consumer.
+With the example's default five-second commit interval and two-second sampling,
+this is twelve seconds. The separate live finalization test enforces the tighter
+three-second processing bound. Record the actual commit configuration with the
+samples; sampled group offsets cannot prove exactly which automatic commit tick
+stored the last offset. The prototype reached zero in four seconds:
 
 ```text
 +2s committed=200 log-end=250 lag=50
@@ -841,11 +968,13 @@ okf validate docs/bug-reports --strict --profile docs/bug-reports/profile.dhall 
 
 Each `okf validate` prints a line beginning with `OK:`.
 
-Format and commit. Every commit for this plan carries both trailers.
+Format and commit. Stage the intended source, test, and documentation paths for
+the milestone explicitly alongside the plan; inspect `git diff --cached` before
+committing. Every commit for this plan carries both trailers.
 
 ```bash
 nix fmt
-git add -A
+git add -- docs/plans/18-drain-the-consumer-queue-without-blocking-under-the-consumer-lock.md
 git commit
 ```
 
@@ -861,40 +990,53 @@ Intention: intention_01m3sm1x24eatrd12wr30hxqkx
 
 ## Validation and Acceptance
 
+
 The plan is complete when all of the following hold.
 
 `caught-up source does not delay finalization (scripted log)` passes: fifty records
-are stored and the handler calls span less than one second. With the library change
-reverted the span is about five seconds.
+are stored in order and first handler entry through last successful finalizer
+completion takes less than one second. The unchanged baseline must fail this bound;
+the historical handler-only span was about five seconds.
 
 `idle source never waits inside the client (scripted log)` passes: in one idle second
 the source makes between 20 and 250 polls and none has a non-zero timeout. With the
 change reverted it makes ten, all with a 100 ms timeout.
 
 `caught-up consumer finalizes promptly` passes against the live broker: thirty records
-in under three seconds. With the change reverted it takes about nine.
+successfully finalized in under three seconds from first measured handler entry,
+with exact counts and ordered payloads after warm-up. The unchanged baseline must
+fail; the historical handler-only span was about nine seconds.
 
 `direct stream consumes on the non-threaded runtime` passes before and after the
 change.
 
 `source yields every record in order across drains (scripted log)`,
 `fatal poll error ends the stream`, and
-`consumes with the synchronous callback poll mode` pass.
+`consumes with the synchronous callback poll mode` pass, together with the
+batch-cap, mixed-error, shutdown/fatal-slot, idle-wait boundary, and non-threaded
+sync-rejection cases described in Milestone 2. Every timeout, Kafka error, incomplete
+count, or forced shutdown fails its test instead of being discarded.
 
 Every test that existed before this plan passes unchanged, ten times in a row, with no
 crash.
 
 All three packages build.
 
-The BUG-7 reproduction shows lag reaching zero at the first automatic commit, and the
+The BUG-7 reproduction shows lag zero within the configured commit-visibility
+deadline while the consumer is still running, and the
 idle example consumer uses under 1.5 seconds of CPU per minute.
 
-`grep -n "withConsumerLock" shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/*.hs`
-still shows the lock around the poll, the store, the seek, the pause, and the shutdown
-commit. No consumer call has been moved outside it.
+Inspect each `withConsumerLock` body in
+`shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka/Internal.hs` and
+`shibuya-kafka-adapter/src/Shibuya/Adapter/Kafka.hs`: polling, store, seek, pause,
+and shutdown commit retain their existing lock boundaries, while only the threaded
+idle sleep is outside. A text match alone cannot prove the scope of a lock. If
+plan 16 is already present, poll results and seek-serial stamping stay in the same
+critical section.
 
 
 ## Idempotence and Recovery
+
 
 Every step can be repeated. The tests create topics and groups with random prefixes and
 leave them on the shared broker, as the existing suite does. The reproduction uses the
@@ -919,6 +1061,7 @@ Do not release from this plan. Releasing is a separate, user-initiated step.
 
 
 ## Interfaces and Dependencies
+
 
 No dependency is added or changed. `pollMessageEither` is already exported by
 `Kafka.Effectful.Consumer.Effect` in `kafka-effectful` 0.3.1.0, the version this
@@ -945,10 +1088,12 @@ The package gains a second test suite, `shibuya-kafka-adapter-unthreaded-test`.
 
 Three consequences for users belong in the changelog and the documentation. An idle
 consumer wakes about a hundred times per second instead of about three, which the
-prototype measured as 0.9% of one core against 0.19%. A `pollTimeout` above 10 ms no
-longer has any effect on the source; only the retry seek still uses it, up to 100 ms.
-And a consumer created with the synchronous callback poll mode, which the adapter used
-to reject at the first poll, now works.
+prototype measured as 0.9% of one core against 0.19%. On the threaded runtime,
+a `pollTimeout` above 10 ms no
+longer changes the source's requested idle wait; the retry seek still uses it, up
+to 100 ms. The non-threaded batch-poll path retains its previous timeout semantics.
+Synchronous callback mode now works on the threaded runtime with prompt callbacks
+that do not re-enter the adapter lock; the non-threaded fallback still rejects it.
 
 The verification suite `mori://shinzui/keiro-runtime-kenshou` measures this path with
 its `kafka/pipeline/benchmark/produce-consume-throughput` and
@@ -967,3 +1112,11 @@ dependency is `mori://shinzui/hw-kafka-client/okf/improvement-requests/concepts/
 the request for a binding to librdkafka's queue event notification in the maintained
 fork. The same gap is recorded from the dependency side as
 `mori://shinzui/shibuya-kafka-adapter/upstream-issues/hw-kafka-client-no-queue-event-binding`.
+
+
+Revision note (2026-10-26): reviewed against current adapter and dependency source,
+ADR 0001, registry releases, and upstream tags. Tightened runtime/callback guarantees,
+replaced the test prototypes' discarded-result checks with completion/finalization
+checks, added drain/error/idle lifecycle coverage, separated commit visibility from
+processing latency, and removed the automatic historical crypton constraint. The
+drain algorithm and preserved consumer-lock boundaries are unchanged.
