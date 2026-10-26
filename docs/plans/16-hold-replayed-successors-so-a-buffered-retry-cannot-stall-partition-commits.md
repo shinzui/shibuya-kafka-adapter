@@ -71,23 +71,29 @@ which builds on the mechanism introduced here.
 ## Progress
 
 
-- [ ] Milestone 1: characterize the lost-successor schedule with broker-free and
-  live tests, and capture a compiling source-gate benchmark baseline.
-- [ ] Milestone 2: implement seek-stamped admission and cancellation-safe wake-ups;
-  verify retry, gap, lifecycle, and batch-runner cases alongside the existing suite.
-- [ ] Milestone 3: keep the benchmark within ten percent of baseline, build every
-  package and benchmark component, and pass ten consecutive full-suite runs.
-- [ ] Milestone 4: publish consistent retry documentation, validated CAP-2 and BUG-1
-  records, changelog notes, and the source-gate ADR.
+- [x] Milestone 1 (2026-10-26): broker-free characterization stores only 0–4
+  under legacy filtering. A synchronized live legacy-filter control commits 5
+  before/after close and redelivers exactly offsets 5–11 after assignment on
+  restart. The source-gate benchmark baseline compiles and is recorded below.
+- [x] Milestone 2 (2026-10-26): seek-stamped admission and cancellation-safe
+  wake-ups pass retry, gap, lifecycle and batch-runner regressions. The live
+  fixed candidate commits 12 and the assigned restarted consumer remains idle.
+- [x] Milestone 3 (2026-10-26): source-gate timing improves 17% against its
+  baseline; all packages and benchmark components build. The current integrated
+  candidate passes ten consecutive full-suite runs of 74 tests each.
+- [x] Milestone 4 (2026-10-26): retry docs, CAP-2, BUG-1, changelog and ADR 0002
+  are updated and validated. FRIC-1 is triaged as accepted with private-broker
+  validation replacing dependence on the unavailable shared endpoint.
 
-Implementation handoff (2026-10-26): source gate, all broker-free acceptance cases,
-synchronized one/two-retry runner tests, batch-timeout liveness, live commit/restart
-fixture, documentation and ADR 0002 are implemented. The broker-free suite passes
-55 tests in ten consecutive broker-free runs and all components build. Gate benchmark: 163 μs ± 8.7 μs / 1.6 MB before,
-135 μs ± 8.1 μs / 1.9 MB after (gate-only; 17% faster). Live characterization and
-ten full-suite runs remain pending: host port 9092 times out even after restarting
-the otherwise internally healthy shared broker (FRIC-1 in docs/friction-log/).
-The unchecked milestones retain those acceptance obligations.
+Completed alongside plan 17 on 2026-10-26. The current scripted tests are named
+`a retried record blocks its successors (scripted log)` and
+`a twice-retried record blocks its successors (scripted log)` after plan 17
+strengthened their handler-order assertions. The live gate runs on the generated
+project-private Redpanda 26.2.1 at `127.0.0.1:29092`; the Nix shell exports that
+endpoint through `KAFKA_TEST_BROKER`. Ten full-suite runs pass all 74 tests each
+(10.38–10.54 seconds), and all components build. The original source-gate baseline
+is 163 μs ± 8.7 μs / 1.6 MB, compared with 135 μs ± 8.1 μs / 1.9 MB after the fix
+(gate-only, 17% faster). No feature release was published by this work.
 
 
 ## Surprises & Discoveries
@@ -97,7 +103,8 @@ The unchecked milestones retain those acceptance obligations.
   control stores only offsets 0 through 4. The hold passes 55 broker-free tests,
   including fatal wake-up, blocked seek, cancellation and actual batch timeout.
   Source-gate comparison improves timing by 17%; gate-only allocation increases
-  about 0.3 MB per 10,000 records. Live broker access is blocked by FRIC-1.
+  about 0.3 MB per 10,000 records. The original shared-broker block is recorded in FRIC-1; later private-broker
+  live acceptance resolves this plan’s dependency on that endpoint.
 
 
 - 2026-09-30 (planning): BUG-1 was filed against Hackage 0.9.0.1. It still reproduces
@@ -139,7 +146,8 @@ The unchecked milestones retain those acceptance obligations.
   `effectful-core`, so the proposed `Effectful.runEff` import requires a direct
   dependency there. `cabal build all --enable-benchmarks` succeeds without the old
   `crypton` workaround. The current 40 broker-free tests pass (0.32s); the 13 live
-  tests were not validated because `rpk cluster info -X brokers=127.0.0.1:9092`
+  tests were not validated because `nix develop -c redpanda-local-up
+rpk cluster info -X brokers=127.0.0.1:29092`
   failed with `i/o timeout`. The full-suite attempt was stopped during its first
   integration test. September prototype results above remain historical evidence,
   not a verification of the revised plan's implementation.
@@ -244,10 +252,16 @@ The unchecked milestones retain those acceptance obligations.
 ## Outcomes & Retrospective
 
 
-Source implementation and deterministic acceptance are complete; live acceptance
-and ten full-suite repetitions remain pending host broker access. FRIC-1 remains
-logged because restarting the broker did not restore host access. The source gate
-is available as plan 17's code prerequisite, but this plan is not fully accepted.
+Source and live acceptance are complete. Controlled legacy filtering reproduces
+committed offset 5 before/after close and restart deliveries 5–11. The fixed live
+candidate commits 12 and returns no records after restart and confirmed assignment.
+Ten full-suite repetitions and all-component builds pass. Plan 17's admission check
+strengthens handler ordering independently of this source-gate mechanism.
+
+FRIC-1 in `docs/friction-log/` is accepted: the project uses the supported generated
+private broker, leaving repair of the unrelated shared endpoint outside this work.
+ADR 0002 records the seek stamps, hold/wake contract and gap policy. The follow-up
+plan retains only its owner-publication/Hackage validation milestone.
 
 
 ## Context and Orientation
@@ -388,7 +402,8 @@ as `nix develop -c bash -c '...'`.
 
 Live tests require a reachable Redpanda broker on the development machine; do not
 assume it is running. This repository does not start one. Check it with
-`rpk cluster info -X brokers=127.0.0.1:9092`. If the local helper is available,
+`nix develop -c redpanda-local-up
+rpk cluster info -X brokers=127.0.0.1:29092`. If the local helper is available,
 start it with
 `redpanda-up` and repeat the probe. If it still fails, run the broker-free selection
 below and leave live acceptance pending rather than recording a full-suite pass.
@@ -1039,7 +1054,8 @@ All commands run from the repository root,
 Confirm the broker is reachable before any live test.
 
 ```bash
-rpk cluster info -X brokers=127.0.0.1:9092
+nix develop -c redpanda-local-up
+rpk cluster info -X brokers=127.0.0.1:29092
 ```
 
 Run the whole test suite.

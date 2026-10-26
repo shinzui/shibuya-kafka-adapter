@@ -1,6 +1,8 @@
 # Capability catalog log
 
 ## 2026-10-26
+* **Update**: CAP-1 documents the configurable integration-test broker and project-local Nix default.
+* **Update**: CAP-2 live ordering, committed offset and assigned-restart evidence passes on project-private Redpanda in ten full-suite runs.
 * **Update**: CAP-2 states serial retry ordering and admission limits with synchronized status and ordering evidence.
 * **Update**: CAP-2 documents replayed-successor holds, gap recovery, and deterministic source-gate evidence.
 

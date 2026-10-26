@@ -4,7 +4,7 @@ type: Capability
 description: "Map Shibuya ack decisions to Kafka offset store, seek-back redelivery, partition pause, and shutdown commit for at-least-once delivery."
 generated:
   by: codex-cli/gpt-6.1-sol
-  at: "2026-10-26T19:55:34Z"
+  at: "2026-10-26T23:09:42Z"
 reviews:
   - kind: model
     reviewer: process:openai-codex
@@ -41,7 +41,7 @@ evidence:
     proves: "Broker-free: fixed-seed reference sequences preserve the earliest unresolved offset, duplicate callbacks are idempotent, revoked callbacks are fenced, cancellation releases both locks, seek timeouts are bounded, and exhausted ack operations throw synchronously."
   - kind: test
     resource: shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/IntegrationTest.hs
-    proves: "Against a live broker, buffered retries retain their earliest recovery boundary, restart recovers uncommitted work, synthetic and actual revocation reject old-owner callbacks, and idle/repeated shutdown terminate safely."
+    proves: "Against the project-private live Redpanda broker, exact serial retry ordering, handler-exception redelivery, committed offset 12 and assigned-restart idleness pass; buffered retries retain their earliest recovery boundary, restart recovers uncommitted work, synthetic and actual revocation reject old-owner callbacks, and idle/repeated shutdown terminate safely."
 ---
 
 # At-least-once offset & acknowledgement semantics

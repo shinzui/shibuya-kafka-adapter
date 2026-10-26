@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-10-26
+* **Update**: BUG-1 and BUG-2 live acceptance now passes, including a synchronized legacy-filter committed-offset and restart control.
 * **Update**: BUG-2 source fix and synchronized ordering regressions implemented; live acceptance awaits broker host access.
 * **Update**: BUG-1 source fix implemented; broker-free regressions pass, live commit and restart gate awaits broker host access.
 

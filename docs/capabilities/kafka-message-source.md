@@ -3,8 +3,8 @@ title: "Kafka message source for the Shibuya app runtime"
 type: Capability
 description: "Poll a set of Kafka topics and feed the records to a Shibuya app as an Adapter, with batching and multi-topic/multi-partition dispatch."
 generated:
-  by: claude-cli/sonnet-4.5
-  at: "2026-08-08T00:00:00Z"
+  by: codex-cli/gpt-6.1-sol
+  at: "2026-10-26T23:11:27Z"
 reviews:
   - kind: model
     reviewer: process:openai-codex
@@ -81,8 +81,10 @@ at-least-once offset & acknowledgement semantics record, CAP-2).
   see the processor concurrency policy, so this is a caller contract, not a
   runtime guard.
 - **Integration evidence needs a broker.** The `IntegrationTest` suite connects
-  to a Kafka broker at `127.0.0.1:9092`; without one those cases do not run.
-  The broker-free tests (`AdapterTest`, `AckHandleTest`, `ConvertTest`) cover
+  to the broker selected by `KAFKA_TEST_BROKER`. The Nix shell defaults to the
+  project-private broker at `127.0.0.1:29092`; outside that shell the helper
+  defaults to `127.0.0.1:9092`. These cases require a reachable broker.
+  The broker-free tests (`AdapterTest`, `AckHandleTest`, `ConvertTest`, `DeliveryStatusTest`, `SourceGateTest`) cover
   conversion, ack semantics, and error propagation in isolation, but the
   end-to-end produce/consume claims are only proven when a broker is present.
 - **Pre-1.0.** Every release so far carries breaking changes tracking

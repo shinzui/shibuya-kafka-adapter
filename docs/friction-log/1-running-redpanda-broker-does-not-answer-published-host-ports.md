@@ -6,12 +6,17 @@ generated:
   by: "codex-cli/gpt-6.1-sol"
   at: "2026-10-26T19:45:36Z"
 frictionId: FRIC-1
-status: logged
+status: "accepted"
 impact: blocked
 kind: environment
 origin: "mori://shinzui/shibuya-kafka-adapter"
 affects: "https://github.com/apple/container"
 plan: "docs/plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md"
+resolution: "Use the supported project-private Redpanda at 127.0.0.1:29092 for live acceptance; the shared broker host-forwarding failure remains outside this change."
+amended:
+  - by: "codex-cli/gpt-6.1-sol"
+    at: "2026-10-26T23:08:40Z"
+    change: "Project-private Redpanda restores live validation without altering shared services."
 ---
 # Running Redpanda broker does not answer published host ports
 

@@ -21,6 +21,11 @@ provenance:
       at: 2026-10-26T19:42:11Z
       mode: "implement"
       note: "Begin implementation by verifying and completing the missing plan 16 prerequisite."
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-26T23:02:24Z
+      mode: "implement"
+      note: "Owner accepts the measured allocation increase; enable project-local Redpanda and complete live regression gates."
   reviews:
     - model: "gpt-6-astra"
       harness: "codex-cli"
@@ -79,22 +84,24 @@ which must be implemented first.
 ## Progress
 
 
-- [ ] Milestone 0: source prerequisite and baselines are verified, but plan 16's
-  live commit/restart acceptance remains blocked by host broker access.
+- [x] Milestone 0 (2026-10-26): plan 16's source, live commit/restart
+  acceptance, negative control, benchmark and full-suite gates are complete.
+  Starting core/adapter baselines and the release frontier were verified.
 - [x] Milestone 1 (2026-10-26): both actual runner paths skip superseded
   deliveries. Core suite: 304 examples, zero failures, including single/batch
   lifecycle failures, once-only status sampling, basic/detailed ownership,
   cursor accounting and the superseded trace event.
-- [ ] Milestone 2: core/metrics 0.12.0.0 candidates are implemented and tested
-  (304 core examples, both GC suites, 104 metrics examples; all components build).
-  All 62 benchmark timing checks pass; the allocation gate is unmet pending
-  an owner decision on the measured increase recorded below.
-- [ ] Milestone 3: local-candidate adapter passes 59 broker-free tests, including
-  status, exact one/two-retry order and batch timeout; live ordering and rewritten
-  handler-exception acceptance remain blocked by broker host access.
-- [ ] Milestone 4: documentation, ADRs, CAP-2 and BUG-2 are updated and validated;
-  all components build and ten broker-free repetitions pass. Ten full-suite runs
-  remain pending broker access.
+- [x] Milestone 2 (2026-10-26): core/metrics 0.12.0.0 candidates are committed
+  and tested (304 core examples, both GC suites, 104 metrics examples; all
+  components build). All 62 timing comparisons pass; the owner explicitly
+  accepted about 24 bytes/message and 8 bytes/constructed record of allocation.
+- [x] Milestone 3 (2026-10-26): status and synchronized ordering tests pass
+  against the local candidate. The live ordering, commit/restart and rewritten
+  handler-exception cases all pass on the project-private Redpanda broker.
+- [x] Milestone 4 (2026-10-26): ten consecutive full-suite runs each pass all
+  74 tests (10.38–10.54 seconds per run), including all 15 integration cases.
+  All packages and benchmark components build. Documentation, ADRs, CAP-2 and
+  BUG-2 are updated and validated; friction entries are triaged.
 - [ ] Milestone 5: owner publication of the feature-bearing core is pending;
   preserve this plan's ignored local override until Hackage validation is possible.
 
@@ -103,9 +110,9 @@ Implementation handoff (2026-10-26): starting adapter HEAD was
 `a4b2b8e3e876f550b7fa08fb8d5a94975a0cc9da`. Core baseline was 289 passing examples
 and the existing 62-leaf benchmark on that unchanged HEAD. Hackage preferred
 versions and upstream tags both ended at 0.11.0.0, which lacks the status API.
-Plan 16's source prerequisite was committed as `49788ef`; it passes 55 broker-free
-tests in ten runs but retains its live acceptance obligations. FRIC-1 in
-`docs/friction-log/` records the host/container networking block.
+Plan 16's source prerequisite was committed as `49788ef`; its initial broker-free gate passed 55 tests in ten runs. The later private-broker
+acceptance and ten full-suite runs complete its live obligations. FRIC-1 in
+`docs/friction-log/` records the earlier shared-broker networking block.
 
 The ignored `cabal.project.local` was absent before this session and now contains
 only the documented local core package entry. The solver reports
@@ -113,10 +120,30 @@ only the documented local core package entry. The solver reports
 remove this file only if its contents are still solely this plan's override;
 otherwise remove only the package entry and preserve subsequent user settings.
 Core candidate commit: `e21e823462cc14a4471eedb159354d22704a554f` in
+`mori://shinzui/shibuya`. The generated private-broker setup and configurable test endpoint are committed
+as `10a28b2`. Core ADR acceptance is recorded in commit `1606975` in
 `mori://shinzui/shibuya`. No package was tagged, published or released.
 
 
 ## Surprises & Discoveries
+
+- 2026-10-26 (live completion): enabling `nix.redpanda` in the recorded
+  `nix-haskell-flake` 0.35.0 application generates `nix/redpanda.nix` and preserves
+  all toolchain pins. Its old configured port block was occupied (FRIC-3), so
+  Seihou now persists Kafka 29092, Admin 29644, Schema Registry 28081, Proxy 28082
+  and Console 28080. `redpanda-local-up` creates `shibuya-kafka-adapter-rp-0` and
+  Kafka metadata advertises `127.0.0.1:29092`. Both broker readiness and all live
+  tests pass. The dev shell exports `KAFKA_TEST_BROKER`; test clients and `rpk`
+  topic creation use the same endpoint and topic-creation failures are surfaced.
+
+- 2026-10-26 (live negative control): temporarily restore legacy source filtering
+  and force adapter status to current. A source/handler handshake waits until the
+  legacy filter has discarded every replayed successor before finalizing replay 4.
+  The live group commits 5 before shutdown and after close; an assigned restarted
+  consumer receives exactly `o-5` through `o-11`. Restoring the actual source and
+  status action gives committed offset 12 and no assigned-restart deliveries.
+  Scratch changes are restored byte-for-byte; ten full-suite runs and the final
+  restored-candidate check pass.
 
 - 2026-10-26 (implementation): all 62 core timing comparisons pass the existing
   ten-percent threshold, while allocation increases. The mandatory record field
@@ -127,19 +154,19 @@ Core candidate commit: `e21e823462cc14a4471eedb159354d22704a554f` in
   time changes from 9.274 ms to 8.544 ms and allocation 19,677,469 to 19,910,104 bytes;
   Async 8 changes from 34.229 ms to 32.294 ms and 37,872,309 to 37,899,847 bytes.
   The new record field itself prevents zero construction-allocation growth under
-  this representation; the owner has been asked whether to accept the measured
-  cost. No allocation waiver has been inferred, and Milestone 2 stays unchecked.
+  this representation. The owner explicitly accepted this measured cost on
+  2026-10-26; Milestone 2 is now accepted.
 
 - 2026-10-26 (implementation): forced-current negative control retains plan 16 and
   produces `[0..11] <> [4..11]` for one retry and
   `[0..11] <> [4] <> [4..11]` for two. Restoring the predicate passes both exact-order
   tests. The handshake establishes that all original successors entered the inbox.
 
-- 2026-10-26 (implementation): host Redpanda metadata times out although internal
+- 2026-10-26 (initial implementation): host Redpanda metadata times out although internal
   container metadata succeeds; restarting only the shared broker did not restore
   host access (FRIC-1). A live producer's native cleanup also outlived the fixture
-  timeout and SIGTERM, requiring an external watchdog (FRIC-2). No live acceptance
-  or ten-full-suite result is claimed.
+  timeout and SIGTERM, requiring an external watchdog (FRIC-2). At that checkpoint no live acceptance
+  or ten-full-suite result was available; the later completion entry records both.
 
 
 - 2026-09-30 (planning): BUG-2 was filed against Hackage 0.9.0.1 and still reproduces
@@ -203,6 +230,22 @@ Core candidate commit: `e21e823462cc14a4471eedb159354d22704a554f` in
   the completion boundary.
 
 ## Decision Log
+
+- Decision: use the generated project-local Redpanda lifecycle and persist its
+  separate port block through Seihou rather than altering shared services.
+  Rationale: the owner requested the supported `nix.redpanda` setting; a fresh
+  private broker is reachable and completes live acceptance. The Nix shell
+  defaults `KAFKA_TEST_BROKER` to `127.0.0.1:29092`, and the test helper preserves
+  an explicit endpoint and uses it consistently for clients and topic creation.
+  Date: 2026-10-26
+
+- Decision: accept the measured core allocation increase of about 24 bytes per
+  processed message and 8 bytes per constructed record for this change, retaining
+  the existing ten-percent timing gate and future regression policy.
+  Rationale: the owner explicitly accepted the small allocation change while
+  authorizing project-local Redpanda and completion of the live gates. This is a
+  bounded exception for the recorded candidate, not a general allocation waiver.
+  Date: 2026-10-26
 
 - Decision: develop the core admission check after plan 16's source and broker-free
   acceptance are implemented, retaining all live acceptance gates as unfinished.
@@ -300,17 +343,19 @@ comparison against the fresh post-plan-16 baseline is 150 μs ± 14 μs before a
 132 μs ± 10 μs after, about 12% faster, with approximately 1.9 MB gate-only allocation
 on both runs.
 
-The plan is not fully accepted. Live ordering/handler-exception checks and ten
-full-suite runs require restored host broker access. The core allocation budget
-also remains unmet unless the owner explicitly accepts the measured cost; the
-62 timing passes do not waive that budget. Milestone 5 waits for owner publication.
-FRIC-1 remains logged under plan 16 for broker access. FRIC-2 in
-`docs/friction-log/` records native producer cleanup outliving an in-process timeout;
-new live setup bounds message expiration and the attempted live run uses an external
-watchdog. The attempted final live run was killed by that watchdog at 55 seconds
-while producer API-version queries still reset. FRIC-2 remains logged because
-the underlying cleanup limitation is unresolved; these broker-unavailable attempts
-provide no live correctness evidence.
+Milestones 0 through 4 are accepted. The owner approved the measured core
+allocation increase, and the private Redpanda broker makes all live checks pass.
+Ten consecutive full-suite runs pass all 74 tests; all components build.
+Only Milestone 5 remains: the owner must publish the feature-bearing core release,
+after which the local override is removed and Hackage builds/tests are verified.
+No package has been tagged or published from this plan.
+
+FRIC-1 is accepted: use the supported private broker for tests while the unrelated
+shared-broker forwarding failure remains outside this change. FRIC-2 is accepted:
+native producer cleanup on broker outage still needs explicit preflight and an
+external watchdog; healthy-broker live cleanup passes. FRIC-3 is resolved by the
+persisted project-specific port block. These outcomes are recorded in
+`docs/friction-log/`; no logged friction entries remain under this plan.
 
 ADR 0003 records the adapter predicate and limits; the core's new ADR at
 `mori://shinzui/shibuya`, project-relative
@@ -640,8 +685,10 @@ Still in the shibuya repository. At the end of this milestone the core is a comm
 Run the benchmark comparison against the baseline captured in Milestone 1. The change
 adds one call through a record field per message on the single-message path and one
 fold per batch. The comparison must not report any benchmark slower by more than ten
-percent, and allocation per message must not rise; ADR 0006 treats an allocation
-increase as a regression even when time is within noise. Record the figures for the
+percent. ADR 0006 normally treats any allocation increase as a regression even
+when time is within noise. For this candidate only, the owner accepted the
+recorded increase of about 24 bytes/message and 8 bytes/constructed record on
+2026-10-26; preserve that bounded exception and the general future gate. Record the figures for the
 `hot-path` and `framework-overhead` groups in Surprises & Discoveries. Record time
 and allocation from the same existing workload on both revisions; the CLI timing threshold alone is not allocation evidence. Adding a record field can
 increase allocation even when its default action is shared. If either existing
@@ -972,11 +1019,12 @@ Intention: intention_01m3sbterne78sx93pm5d6qf66
 
 Working directory: `/Users/shinzui/Keikaku/bokuno/shibuya-project/shibuya-kafka-adapter`.
 
-Confirm the broker is reachable before any live test, and start it with `redpanda-up`
-if it is not.
+Start the supported project-private broker before any live test; all subsequent
+Nix-shell test commands inherit its endpoint through `KAFKA_TEST_BROKER`.
 
 ```bash
-rpk cluster info -X brokers=127.0.0.1:9092
+nix develop -c redpanda-local-up
+rpk cluster info -X brokers=127.0.0.1:29092
 ```
 
 Confirm the build uses the sibling core once `cabal.project.local` is in place. The
@@ -1068,8 +1116,10 @@ called for a superseded delivery, that the status is read at handler time rather
 at ingestion, that a batch handler receives only current members with a matching
 `BatchInfo.size`, and that an all-superseded batch is skipped. Every test that existed
 before still passes, which shows that a delivery built by `mkIngested` behaves as it
-did. The benchmark comparison reports no benchmark more than ten percent slower and no
-rise in allocation per message.
+did. The benchmark comparison reports no benchmark more than ten percent slower.
+The owner accepted this candidate's measured allocation increase of about
+24 bytes/message and 8 bytes/constructed record; other regressions still require
+the existing investigation and acceptance process.
 
 In the adapter, the scripted test shows handler order `0,1,2,3,4,4,5,...,11` with all
 twelve offsets stored. With only its status action forced to `DeliveryCurrent` and
@@ -1184,5 +1234,13 @@ Revision note (2026-10-26, implementation): implemented the source prerequisite 
 both repositories, retained broker-blocked live gates, recorded exact negative
 controls and measured allocation growth, and prepared the local 0.12.0.0 candidate.
 Cabal's candidate solver needed explicit `--enable-tests` for the final package-wide
-test commands. Performance acceptance awaits an explicit allocation-budget decision;
-no new benchmark tooling, profiles or calibration was added.
+test commands. The owner subsequently accepted the recorded allocation increase; no new benchmark
+tooling, profiles or calibration was added.
+
+
+Revision note (2026-10-26, live acceptance): the owner accepted the measured
+allocation increase and authorized project-private Redpanda. Enabled the existing
+Seihou setting without changing versions/pins, selected noncolliding ports, made
+test clients and topic creation share one configurable endpoint, and passed the
+live checks plus ten full-suite repetitions. Milestones 0–4 are accepted;
+publication and Hackage validation remain owner-dependent under Milestone 5.

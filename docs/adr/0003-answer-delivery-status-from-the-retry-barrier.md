@@ -47,5 +47,6 @@ of internal constructors retain their existing signatures.
 records synchronized one/two-retry order assertions, the forced-current negative
 control, status tests and benchmark results. The scripted tests run the real
 adapter and runner; live ordering, durable committed offset and restart
-acceptance are separate tests in `IntegrationTest.hs` and remain subject to the
-recorded broker-access gate.
+acceptance are separate tests in `IntegrationTest.hs`. They pass on the generated
+project-private Redpanda broker at `127.0.0.1:29092`, including the exact handler
+exception trace. Ten consecutive full-suite runs pass all 74 tests.

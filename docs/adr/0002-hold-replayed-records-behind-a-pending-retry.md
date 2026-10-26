@@ -42,5 +42,7 @@ consumer-lock polling cost remain separate issues.
 [Plan 16](../plans/16-hold-replayed-successors-so-a-buffered-retry-cannot-stall-partition-commits.md)
 records the negative control, broker-free runner regressions and gate benchmark.
 `shibuya-kafka-adapter/test/Shibuya/Adapter/Kafka/SourceGateTest.hs` covers holds,
-gaps, cancellation and batch timeout. Live commit and restart validation remains
-pending host access to Redpanda; the deterministic tests do not certify that gate.
+gaps, cancellation and batch timeout. Live commit and restart validation passes on the project-private Redpanda broker:
+committed offset 12 survives close, and an assigned restarted consumer stays idle.
+A synchronized legacy-filter control commits only 5 and redelivers offsets 5–11.
+Ten full-suite runs pass all 74 integrated tests.

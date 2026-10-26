@@ -6,13 +6,18 @@ generated:
   by: "codex-cli/gpt-6.1-sol"
   at: "2026-10-26T19:57:32Z"
 frictionId: FRIC-2
-status: logged
+status: "accepted"
 impact: detour
 kind: interface
 origin: "mori://shinzui/shibuya-kafka-adapter"
 affects: "mori://haskell-works/hw-kafka-client"
 plan: "docs/plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md"
 workaround: "New live scenarios use a five-second producer message expiration; broker-unavailable verification is additionally bounded by an external process watchdog."
+resolution: "Keep bounded producer setup and an external process watchdog for broker outages; with a reachable private broker all live tests pass in ten full-suite runs."
+amended:
+  - by: "codex-cli/gpt-6.1-sol"
+    at: "2026-10-26T23:08:40Z"
+    change: "Accept the native cleanup limitation with explicit broker preflight and bounded failure handling."
 ---
 # Producer cleanup outlives the live fixture timeout when broker metadata stalls
 
