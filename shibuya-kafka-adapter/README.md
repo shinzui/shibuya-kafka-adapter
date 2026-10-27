@@ -66,5 +66,5 @@ mori.dhall                        project manifest (mori registry)
 MIT. See package cabal files for details.
 
 
-The unreleased adapter requires the feature-bearing `shibuya-core ^>=0.12.0.0`;
-it must not be released before that dependency.
+The adapter requires the published `shibuya-core ^>=0.12.0.0`, which provides
+the delivery-status API used to skip superseded deliveries before handler entry.

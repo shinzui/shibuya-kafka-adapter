@@ -12,6 +12,8 @@
     # directly in nix/haskell.nix; relocated here so the managed file stays
     # pristine across upgrades.
     haskellProject.extraDevPackages = [ pkgs.rdkafka ];
+    # The generated package scope must use the library's Cabal source directory.
+    haskellProject.packageSource = ./shibuya-kafka-adapter;
     # Match the project-local broker configured by nix-haskell-flake. Preserve
     # an explicit endpoint when testing against another Kafka cluster.
     haskellProject.shellHook = ''
@@ -86,8 +88,8 @@
             shibuya-core = pkgs.haskell.lib.dontCheck (hself.callHackageDirect
               {
                 pkg = "shibuya-core";
-                ver = "0.11.0.0";
-                sha256 = "0d7g4vz3w2dmibrc9bfaxmbzgsn3qi55dhyd751x3bn88zfzpvs4";
+                ver = "0.12.0.0";
+                sha256 = "08lbiiz8rnq9im34nmdg6a2f72sy2wxdk7rf5z7sqh5z8qmfmydq";
               }
               { });
             # unicode-data-0.6's tests compare against GHC 9.12.4's newer

@@ -90,6 +90,5 @@ MIT. See package cabal files for details.
 With `kafkaRebalanceHandler` installed, deliveries already revoked when their status is checked are skipped before handler entry. A revocation after that admission check cannot cancel an admitted handler.
 
 
-The unreleased adapter requires `shibuya-core ^>=0.12.0.0`. Until that core
-release is published, use a local `cabal.project.local` package entry for its
-candidate checkout, as described in [plan 17](docs/plans/17-skip-superseded-buffered-deliveries-so-successors-cannot-run-before-a-retried-record.md).
+The adapter requires the published `shibuya-core ^>=0.12.0.0`. Build against
+Hackage without a local `cabal.project.local` override for core.

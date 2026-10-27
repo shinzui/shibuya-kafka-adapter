@@ -1,40 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.12.0.0 — 2026-10-26
 
 ### Breaking Changes
 
-- Require `shibuya-core ^>=0.12.0.0`, whose delivery-status contract lets the
-  runner skip superseded deliveries. Until it is published, builds need the
-  local candidate override documented in plan 17; do not release the adapter.
+- Require the published `shibuya-core ^>=0.12.0.0` across the library, tests,
+  examples, and benchmarks. Its delivery-status contract lets the runner skip
+  superseded deliveries. This also adopts the extended application configuration,
+  processor metrics, and paused-state API introduced in core 0.11.0.0 from
+  `mori://shinzui/shibuya`.
+- In the exposed internal module, replace `dropStaleRecords` with `gateRecords`;
+  `kafkaSource` now yields seek-stamped `Polled` records.
 
 ### Bug Fixes
 
 - Under serial single-message processing, skip buffered successors before
   handler entry until the retried record resolves. Same-batch work already
   admitted together and later revocation races retain their documented limits.
-
 - Retain replayed successors behind a pending retry so successful processing
   advances stored offsets to the log end without a restart. Missing retry offsets
   resume at the next available record with a warning.
 
 ### Other Changes
 
-- Replace internal `dropStaleRecords` with `gateRecords`; internal `kafkaSource`
-  now yields seek-stamped `Polled` records.
-
-## 0.10.0.0 — 2026-10-25
-
-### Breaking Changes
-
-- Require `shibuya-core ^>=0.11.0.0` across the library, tests, examples, and
-  benchmarks. This adopts the extended application configuration, processor
-  metrics, and paused-state API from `mori://shinzui/shibuya`.
-
-### Other Changes
-
-- Keep all three repository packages on the shared `0.10.0.0` version line.
-- Update the Nix library build to use the published Shibuya core 0.11.0.0.
+- Keep all three repository packages on the shared `0.12.0.0` version line.
+- Update the Nix library build to use the published Shibuya core 0.12.0.0.
+- Run integration tests against the project-local Redpanda cluster, with
+  `KAFKA_TEST_BROKER` available to select another broker.
 
 ## 0.9.1.0 — 2026-09-21
 
