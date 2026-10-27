@@ -1,94 +1,215 @@
 # shibuya-kafka-adapter
 
-Kafka adapter for the [Shibuya](https://github.com/shinzui/shibuya) queue-processing framework.
+Consume Kafka messages through the [Shibuya](mori://shinzui/shibuya)
+queue-processing framework, with explicit acknowledgements, partition-aware
+retries, offset management, and OpenTelemetry context propagation.
 
-Integrates with Apache Kafka via [`kafka-effectful`](https://github.com/shinzui/kafka-effectful) for the consumer effect (polling, offset store, partition pause) and [`hw-kafka-streamly`](https://hackage.haskell.org/package/hw-kafka-streamly) for error classification (`skipNonFatal`), on top of [`hw-kafka-client`](https://github.com/haskell-works/hw-kafka-client). Provides polling, offset commit semantics, partition awareness, and graceful shutdown.
+**Release:** [0.12.0.0 on Hackage](https://hackage.haskell.org/package/shibuya-kafka-adapter-0.12.0.0)
+· [API documentation](https://hackage.haskell.org/package/shibuya-kafka-adapter-0.12.0.0/docs/Shibuya-Adapter-Kafka.html)
+· [Changelog](shibuya-kafka-adapter/CHANGELOG.md)
 
-## Runtime Contract
+The adapter requires `shibuya-core ^>=0.12.0.0` and GHC 9.12. The repository's
+Nix shell uses GHC 9.12.4. It builds on
+[kafka-effectful](mori://shinzui/kafka-effectful) for consumer operations and
+[hw-kafka-streamly](mori://shinzui/hw-kafka-streamly) for poll-error classification.
 
-Run this adapter with serial message processing only. librdkafka stores the highest offset per partition and does not track gaps, so concurrent finalization can commit past an earlier message that failed, halted, or requested retry. The adapter cannot inspect the processor concurrency policy at construction time; avoiding `Async` and `Ahead` processing is a caller contract until a gap-tracking commit layer exists.
+## Using the adapter
 
-Offset reset policy belongs to the `Subscription` passed to `runKafkaConsumer`, for example `topics [TopicName "orders"] <> offsetReset Earliest`. `KafkaAdapterConfig.topics` is metadata used for adapter naming and a construction-time warning if it differs from the live subscription.
+Add these dependencies to your application:
 
-`AckRetry` preserves the earliest unresolved delivery for the partition, seeks back to that offset, and does not store it. Later buffered callbacks cannot replace or cross that recovery boundary; only a newer replay of the boundary delivery can resolve it. Records polled before the seek are discarded. Replayed successors wait behind the retried record until it is resolved; if retention or compaction removed that offset, the adapter warns, abandons the missing record, and resumes at the next available offset. `AckDeadLetter` stores the offset so the consumer group moves on, prints `[shibuya-kafka-adapter] WARNING: dead-lettered message DROPPED` to stderr, and makes the message unrecoverable from the group's committed position. This adapter does not include a DLQ producer.
-
-Under serial single-message processing, already-buffered successors are skipped before handler entry and redelivered after the retried record resolves. This preserves partition handler order, subject to the missing-offset recovery policy. A retry cannot undo successors already admitted in the same batch; later superseded batches are skipped. Concurrent processing is unsupported and can admit a successor before the retry is recorded.
-
-Kafka does not expose a per-message delivery-attempt counter through this consumer API, so `Envelope.attempt` is always `Nothing`. Handlers that need bounded retries must use their own store or return `AckHalt` to stop the stream.
-
-`AckHalt` pauses the originating partition and stops the processor. Polling then stops; after `max.poll.interval.ms` (librdkafka default: 300000 ms, or 5 minutes) the broker may evict this consumer and rebalance the partition to another group member. A single-member group stalls until restart.
-
-On shutdown, the adapter commits offsets stored so far and signals the source stream to stop. Let the surrounding `runKafkaConsumer` scope end normally after stopping the app so the consumer close path can flush offsets stored during the drain window.
-
-For rebalance fencing, create state with `newKafkaAdapterState`, install `Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))` before consumer creation, and pass the same state to `kafkaAdapterWith`. The helper logs assignment changes, clears local recovery state on revocation, and advances a partition generation so callbacks retained by the old owner cannot store, seek, or pause the new assignment. Callers that omit the optional callback do not get that ownership fence.
-
-## Packages
-
-- `shibuya-kafka-adapter` — the adapter library (`Shibuya.Adapter.Kafka`, `.Config`, `.Convert`).
-- `shibuya-kafka-adapter-bench` — micro-benchmarks for the conversion hot path (`ConsumerRecord` → `Envelope`, W3C header extraction, timestamps).
-- `shibuya-kafka-adapter-jitsurei` — runnable examples: `BasicConsumer`, `MultiTopic`, `MultiPartition`, `OffsetManagement`.
-
-## Building
-
-The repo ships a Nix flake and `direnv` config for a reproducible toolchain.
-
-```sh
-direnv allow        # or: nix develop
-cabal build all
-redpanda-local-up   # Apple Silicon macOS; project-local broker
-cabal test shibuya-kafka-adapter
+```cabal
+build-depends:
+  base ^>=4.21,
+  effectful-core,
+  hw-kafka-client >=5.3 && <6,
+  kafka-effectful ^>=0.3.1.0,
+  shibuya-core ^>=0.12.0.0,
+  shibuya-kafka-adapter ^>=0.12.0.0
 ```
 
-Benchmarks and examples:
+The consumer scope owns the Kafka connection and subscription. Create the
+adapter inside that scope and use `mkProcessor`, which defaults to serial
+processing. Disable automatic offset storage so a record's offset is stored
+only after acknowledgement.
 
-```sh
-cabal bench shibuya-kafka-adapter-bench
-cabal run BasicConsumer
+This example prints messages from `orders` on `localhost:9092`:
+
+```haskell
+{-# LANGUAGE GHC2024 #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+module Main (main) where
+
+import Control.Monad.IO.Class (liftIO)
+import Effectful (runEff)
+import Effectful.Error.Static (runError)
+import Kafka.Consumer.Types (OffsetReset (Earliest))
+import Kafka.Effectful.Consumer qualified as Kafka
+import Shibuya.Adapter.Kafka
+  ( BrokerAddress (..), ConsumerGroupId (..), KafkaError, TopicName (..)
+  , defaultConfig, kafkaAdapter
+  )
+import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
+import Shibuya.Core.Ack (AckDecision (AckOk))
+import Shibuya.Core.Ingested (Message (..))
+import Shibuya.Core.Types (Envelope (..))
+import Shibuya.Telemetry.Effect (runTracingNoop)
+
+main :: IO ()
+main = do
+  result <- runEff . runError @KafkaError . runTracingNoop $ do
+    let props = Kafka.brokersList [BrokerAddress "localhost:9092"]
+             <> Kafka.groupId (ConsumerGroupId "orders-consumer")
+             <> Kafka.noAutoOffsetStore
+        sub = Kafka.topics [TopicName "orders"] <> Kafka.offsetReset Earliest
+    Kafka.runKafkaConsumer props sub $ do
+      adapter <- kafkaAdapter (defaultConfig [TopicName "orders"])
+      let handler message = do
+            liftIO (print message.envelope.payload)
+            pure AckOk
+      app <- runApp defaultAppConfig
+        [(ProcessorId "orders", mkProcessor adapter handler)]
+      case app of
+        Left err -> liftIO (fail (show err))
+        Right handle -> waitApp handle
+  case result of
+    Left err -> fail (show err)
+    Right () -> pure ()
 ```
+
+`defaultConfig` polls with a 1,000 ms timeout and a maximum batch size of 100.
+Its `topics` field supplies adapter metadata and is checked against the live
+subscription. Subscription topics and offset-reset policy belong to
+`runKafkaConsumer`.
+
+## Acknowledgements and ordering
+
+**Use serial processing.** The adapter does not support Shibuya's `Async` or
+`Ahead` policies. librdkafka stores the highest offset per partition without
+tracking gaps; concurrent finalization can commit past unresolved work. The
+adapter cannot inspect or enforce the processor's concurrency policy.
+
+| Decision | Adapter behavior |
+| --- | --- |
+| `AckOk` | Store the record's offset locally; auto-commit or consumer close flushes it to the broker. |
+| `AckRetry` | Keep the earliest unresolved delivery as the retry boundary, seek back to it, and leave its offset unstored. |
+| `AckDeadLetter` | Store the offset and log a `dead-lettered message DROPPED` warning. The adapter has no DLQ producer. |
+| `AckHalt` | Pause the originating partition without storing its offset; the processor stops. |
+
+With serial single-message processing, a retry blocks later messages in the
+same partition. Pre-seek records are discarded, already-buffered successors
+are skipped before handler entry, and replayed successors wait until the
+retried record resolves. Later callbacks cannot replace the earliest retry
+boundary or store offsets past it. A retry cannot undo messages already
+admitted together in the same handler batch.
+
+If retention or compaction removed the retry offset, the adapter warns and
+resumes at the next available record. Kafka provides no delivery-attempt
+counter here: `Envelope.attempt` is always `Nothing`. Use an external store
+for bounded retry counts, or halt processing.
+
+A dead-letter acknowledgement advances the group's position without publishing
+the message elsewhere. Arrange any required DLQ publication before returning
+`AckDeadLetter`.
+
+## Rebalances and shutdown
+
+For assignment fencing, create state with `newKafkaAdapterState`, add
+`Kafka.Consumer.setCallback (Kafka.Consumer.rebalanceCallback (kafkaRebalanceHandler state))`
+to the consumer properties before consumer creation, and construct the adapter
+with `kafkaAdapterWith state config`.
+
+The callback logs assignment changes, clears retry state on revocation, and
+fences old delivery callbacks so they cannot store, seek, or pause a later
+assignment. Deliveries revoked before their admission check are skipped. A
+revocation after that check cannot cancel a handler already admitted. The
+helper is optional; `kafkaAdapter` alone does not provide this ownership fence.
+
+Keep the consumer scope open while stopping the Shibuya application. Adapter
+shutdown signals the source to stop and commits offsets already stored. Let
+`runKafkaConsumer` close normally afterward so it can flush offsets stored
+during draining.
+
+After `AckHalt`, polling stops. The consumer can lose its assignment when
+`max.poll.interval.ms` expires; a single-member group needs a restart to resume.
+Partition pause state belongs to the consumer session.
+
+## Errors and tracing
+
+Non-fatal poll errors, including timeouts and partition EOFs, are filtered out.
+Fatal poll errors terminate the source through `Error KafkaError`. Exhausted
+acknowledgement operations throw `KafkaAcknowledgementException` at the
+finalizer boundary so Shibuya can retain the processor failure.
+
+The adapter preserves Kafka headers, extracts W3C `traceparent` and `tracestate`,
+and adds `messaging.system=kafka`, `messaging.kafka.destination.partition`, and
+`messaging.kafka.message.offset` to the envelope. Shibuya's runner uses these
+attributes on its per-message span. The example above disables tracing with
+`runTracingNoop`; use the configured tracing interpreter to export spans.
 
 ## Development
 
-Common development tasks are available as `just` recipes. Run `just` (with no arguments) for the full list. For tests on Apple Silicon macOS, run `just redpanda-up`, then `just test`.
-The `nix.redpanda` setting supplies `redpanda-local-{up,down,status,logs,purge}`
-commands. The private broker is named `shibuya-kafka-adapter-rp-0` and listens on
-`127.0.0.1:29092`; its Admin API uses port `29644`. Its names and ports are
-separate from the shared cluster. `just redpanda-down` stops it and preserves data.
+Enter the reproducible toolchain with `nix develop`, or run `direnv allow`.
+Build against published dependencies without a local core package override:
 
-The Nix shell defaults `KAFKA_TEST_BROKER` to `127.0.0.1:29092`. Tests use that
-endpoint for both clients and topic creation. Override it explicitly to test
-another broker, for example
-`KAFKA_TEST_BROKER=127.0.0.1:9092 cabal test shibuya-kafka-adapter`.
-Outside the Nix shell, the test helper retains the shared-broker default at
-`127.0.0.1:9092`. Other platforms can select any reachable Kafka-compatible broker
-through the same variable.
-
-`just process-up` also starts the private broker and the configured Jaeger process.
-The example topic recipes and examples retain their existing Kafka configuration;
-set their broker endpoint separately when using them with the private cluster.
-
-## Notes
-
-### Error classification
-
-The adapter filters non-fatal Kafka errors via `skipNonFatal` from `hw-kafka-streamly`. This drops poll timeouts and partition-EOF markers alongside genuinely benign errors. If your application relies on observing partition EOF (for example, to terminate a bounded read), the upstream `Kafka.Streamly.Stream.skipNonFatalExcept` helper takes a predicate list that lets EOFs through; use it in place of the adapter and build your own envelope conversion if you need that behavior.
-
-## Layout
-
+```sh
+cabal update
+cabal build all --enable-benchmarks
 ```
-shibuya-kafka-adapter/            library sources and tests
-shibuya-kafka-adapter-bench/      tasty-bench micro-benchmarks
-shibuya-kafka-adapter-jitsurei/   runnable usage examples
-docs/plans/                       execution plans
-mori.dhall                        project manifest (mori registry)
+
+Integration tests require a Kafka-compatible broker. On Apple Silicon macOS,
+the shell provides a private Redpanda cluster:
+
+```sh
+just redpanda-up
+just test
+just redpanda-down
 ```
+
+The broker is `shibuya-kafka-adapter-rp-0` at `127.0.0.1:29092`, with its Admin
+API on `29644`. Stopping it preserves its data. The Nix shell sets
+`KAFKA_TEST_BROKER` to this private endpoint; tests use it for both clients and
+topic creation. To use another broker on any platform:
+
+```sh
+KAFKA_TEST_BROKER=127.0.0.1:9092 cabal test shibuya-kafka-adapter
+```
+
+Outside the Nix shell, tests default to `127.0.0.1:9092`.
+`just process-up` starts the private broker and Jaeger; stop the broker
+separately with `just redpanda-down` when finished.
+
+Other checks and tools:
+
+```sh
+nix fmt
+nix build --no-link
+nix flake check
+cabal bench shibuya-kafka-adapter-bench
+cabal haddock shibuya-kafka-adapter
+```
+
+Run `just` to list available recipes.
+
+## Examples and repository layout
+
+Only `shibuya-kafka-adapter` is published to Hackage. The examples and benchmarks
+share its version within this repository.
+
+| Path | Contents |
+| --- | --- |
+| `shibuya-kafka-adapter/` | Library, tests, package README, and changelog |
+| `shibuya-kafka-adapter-jitsurei/` | Consumer, offset-management, multi-partition, error, and tracing examples |
+| `shibuya-kafka-adapter-bench/` | Conversion micro-benchmarks and the `lifecycle-live` broker fixture |
+| `docs/capabilities/` | Capability contracts and supporting evidence |
+| `docs/plans/` | Implementation and acceptance records |
+
+For example, run `cabal run basic-consumer`, `cabal run multi-topic`, or
+`cabal run otel-demo`. These examples configure `localhost:9092` in their source;
+adjust their broker settings to use the private cluster on `29092`.
+`KAFKA_TEST_BROKER` configures tests, not the examples.
 
 ## License
 
-MIT. See package cabal files for details.
-
-
-With `kafkaRebalanceHandler` installed, deliveries already revoked when their status is checked are skipped before handler entry. A revocation after that admission check cannot cancel an admitted handler.
-
-
-The adapter requires the published `shibuya-core ^>=0.12.0.0`. Build against
-Hackage without a local `cabal.project.local` override for core.
+MIT. See [LICENSE](shibuya-kafka-adapter/LICENSE).
