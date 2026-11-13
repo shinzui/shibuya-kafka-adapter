@@ -24,6 +24,11 @@
 --       -H 'traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' \\
 --       <<< 'hello-otel'
 --   cabal run otel-demo     # shell 2
+--
+-- By default the processing span is a child of the producer's span and
+-- links to it ('ParentAndLink'). Set @OTEL_DEMO_LINK_ONLY=true@ to run the
+-- adapter with 'LinkOnly': the processing span then starts its own trace and
+-- reaches the producer only through its link.
 module Main (main) where
 
 import Control.Exception (bracket)
@@ -53,8 +58,8 @@ import OpenTelemetry.Trace
     shutdownTracerProvider,
     tracerOptions,
   )
-import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (defaultConfig, kafkaAdapter)
+import Shibuya.Adapter (Adapter (source))
+import Shibuya.Adapter.Kafka (AdapterTelemetry (traceCorrelation), KafkaAdapterConfig (telemetry), TraceCorrelation (..), defaultAdapterTelemetry, defaultConfig, kafkaAdapter)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, mkProcessor, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.Ingested (Message (..))
@@ -80,22 +85,30 @@ main = do
         (n : _) -> readMaybe n
         _ -> Nothing
   cgId <- maybe defaultGroupId Text.pack <$> lookupEnv "OTEL_DEMO_GROUP"
+  broker <- maybe "localhost:9092" Text.pack <$> lookupEnv "KAFKA_BROKER"
+  correlation <- (\v -> if v `elem` [Just "true", Just "1"] then LinkOnly else ParentAndLink) <$> lookupEnv "OTEL_DEMO_LINK_ONLY"
   TIO.putStrLn $
     "[otel-demo] Starting (consumes "
       <> Text.pack (show messagesToProcess)
       <> " message(s); group="
       <> cgId
+      <> "; correlation="
+      <> Text.pack (show correlation)
       <> ")..."
   bracket initializeGlobalTracerProvider (`shutdownTracerProvider` Just 5_000_000) $ \provider -> do
     let tracer = makeTracer provider "shibuya-kafka-adapter-jitsurei" tracerOptions
     result <- runEff . runError @KafkaError . runTracing tracer $ do
       let props =
-            brokersList [BrokerAddress "localhost:9092"]
+            brokersList [BrokerAddress broker]
               <> groupId (ConsumerGroupId cgId)
               <> noAutoOffsetStore
           sub = topics [TopicName topicName] <> offsetReset Earliest
       runKafkaConsumer props sub $ do
-        upstream <- kafkaAdapter (defaultConfig [TopicName topicName])
+        upstream <-
+          kafkaAdapter
+            (defaultConfig [TopicName topicName])
+              { telemetry = defaultAdapterTelemetry {traceCorrelation = correlation}
+              }
         -- Cap the underlying source so the demo terminates.
         let finiteAdapter =
               upstream {source = Stream.take messagesToProcess upstream.source}

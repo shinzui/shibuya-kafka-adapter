@@ -14,7 +14,7 @@ import Kafka.Consumer (RdKafkaRespErrT (..))
 import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), PartitionOffset (..), RebalanceEvent (..), Timestamp (..), TopicPartition (..))
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer (..))
 import Kafka.Types (BatchSize (..), KafkaError (..), PartitionId (..), Timeout (..), TopicName (..))
-import Shibuya.Adapter (Adapter (..))
+import Shibuya.Adapter (Adapter (..), defaultAdapterTelemetry)
 import Shibuya.Adapter.Kafka (kafkaRebalanceHandler)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..))
 import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), gateRecords, ingestedStream, kafkaSource, mkAckHandle, mkIngested, newKafkaAdapterState)
@@ -294,7 +294,8 @@ testTerminalFailureReachesCore = do
               Adapter
                 { adapterName = "kafka:test-terminal-ack-failure",
                   source = Stream.fromList [ingested],
-                  shutdown = pure ()
+                  shutdown = pure (),
+                  telemetry = defaultAdapterTelemetry
                 }
             processor = mkProcessor adapter (\_ -> pure AckOk)
         appResult <- runApp defaultAppConfig [(processorId, processor)]
@@ -438,7 +439,8 @@ testConfig =
   KafkaAdapterConfig
     { topics = [TopicName "orders"],
       pollTimeout = Timeout 100,
-      batchSize = BatchSize 100
+      batchSize = BatchSize 100,
+      telemetry = defaultAdapterTelemetry
     }
 
 defaultMockState :: MockState

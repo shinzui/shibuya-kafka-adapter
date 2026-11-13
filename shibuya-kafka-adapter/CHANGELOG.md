@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.13.0.0 — Unreleased
+
+### Breaking Changes
+
+- Require the published `shibuya-core ^>=0.13.0.0` from
+  `mori://shinzui/shibuya` across the library, tests, examples and benchmarks.
+  Core 0.13 renames processing spans from `<processor> process` to
+  `process <processor>` and adds `messaging.operation.name = "process"`; update
+  trace queries, dashboards and alerts that match the old span name.
+- Add the strict field `telemetry :: AdapterTelemetry` to `KafkaAdapterConfig`.
+  Configurations built from `defaultConfig` with record update need no change;
+  a full `KafkaAdapterConfig { .. }` literal must set it, normally to
+  `defaultAdapterTelemetry`.
+
+### New Features
+
+- Choose how each record's processing span relates to the producer's span with
+  `telemetry = defaultAdapterTelemetry {traceCorrelation = LinkOnly}`. The
+  default, `ParentAndLink`, keeps the span in the producer's trace as its child
+  and now also links to the producer. `LinkOnly` starts a new trace per record,
+  linked to the producer, for replay, sustained lag and wide consumer-group
+  fan-out. Without a usable `traceparent` neither adds a link. Re-export
+  `AdapterTelemetry (traceCorrelation)`, `defaultAdapterTelemetry` and
+  `TraceCorrelation (..)` from `Shibuya.Adapter.Kafka`.
+
+### Other Changes
+
+- Add broker-free correlation tests over the scripted log, document the setting
+  in the README, and let `otel-demo` select `LinkOnly` with
+  `OTEL_DEMO_LINK_ONLY=true`.
+
 ## 0.12.0.0 — 2026-10-26
 
 ### Breaking Changes

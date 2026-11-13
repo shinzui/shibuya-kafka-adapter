@@ -27,7 +27,7 @@ import Kafka.Effectful.Producer (flushProducer, produceMessage, runKafkaProducer
 import Kafka.Effectful.Producer qualified as Producer
 import Kafka.Producer.Types (ProducePartition (..), ProducerRecord (..))
 import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError, Timeout (..), TopicName (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter)
+import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), defaultAdapterTelemetry, kafkaAdapter)
 import Shibuya.App
   ( ProcessorId (..),
     ShutdownConfig (drainTimeout, totalShutdownTimeout),
@@ -219,7 +219,8 @@ runConsumerSegment config topic group processedRef failedRef ledger action = do
         KafkaAdapterConfig
           { topics = [topic],
             pollTimeout = Timeout 250,
-            batchSize = BatchSize 500
+            batchSize = BatchSize 500,
+            telemetry = defaultAdapterTelemetry
           }
   outcome <- runEff . runError @KafkaError $ runKafkaConsumer properties subscription $ runTracingNoop $ do
     adapter <- kafkaAdapter adapterConfig

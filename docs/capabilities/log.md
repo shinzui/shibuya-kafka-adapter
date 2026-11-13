@@ -1,5 +1,8 @@
 # Capability catalog log
 
+## 2026-11-13
+* **Update**: Envelope conversion notes the `KafkaAdapterConfig.telemetry` trace-correlation setting (`ParentAndLink` default, `LinkOnly` override) that decides how the span built from `traceContext` relates to the producer.
+
 ## 2026-10-26
 * **Update**: CAP-1 documents the configurable integration-test broker and project-local Nix default.
 * **Update**: CAP-2 live ordering, committed offset and assigned-restart evidence passes on project-private Redpanda in ten full-suite runs.

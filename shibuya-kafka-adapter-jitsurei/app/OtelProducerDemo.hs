@@ -64,9 +64,12 @@ import Shibuya.Telemetry.Semantic
   ( attrMessagingDestinationName,
     attrMessagingSystem,
   )
+import System.Environment (lookupEnv)
 
-producerProps :: ProducerProperties
-producerProps = PP.brokersList [BrokerAddress "localhost:9092"]
+-- | The broker comes from @KAFKA_BROKER@ (default @localhost:9092@), so the
+-- demo can target this repository's private Redpanda (@127.0.0.1:29092@).
+producerProps :: Text.Text -> ProducerProperties
+producerProps broker = PP.brokersList [BrokerAddress broker]
 
 producerSpanArgs :: SpanArguments
 producerSpanArgs = defaultSpanArguments {kind = Producer}
@@ -74,8 +77,9 @@ producerSpanArgs = defaultSpanArguments {kind = Producer}
 main :: IO ()
 main = do
   TIO.putStrLn "[otel-producer-demo] Starting..."
+  broker <- maybe "localhost:9092" Text.pack <$> lookupEnv "KAFKA_BROKER"
   bracket initializeGlobalTracerProvider (`shutdownTracerProvider` Just 5_000_000) $ \provider -> do
-    bracket (newProducer producerProps) closeIfRight $ \case
+    bracket (newProducer (producerProps broker)) closeIfRight $ \case
       Left err ->
         putStrLn $ "[otel-producer-demo] Failed to create producer: " <> show err
       Right producer -> do

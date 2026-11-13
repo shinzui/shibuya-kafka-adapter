@@ -78,6 +78,11 @@ sees the base conversion without those fields.
   which reads `Envelope.attributes` and `traceContext`. End-to-end span shape is
   therefore a property of the consuming app composed with `shibuya-core`, not of
   this repository — see the exclusion note in the catalog index (`index.md`).
+  The one span-shape choice this repository exposes is
+  `KafkaAdapterConfig.telemetry`, copied unchanged into the `Adapter`: its
+  `traceCorrelation` decides whether the span built from `traceContext` is the
+  producer's child and linked to it (`ParentAndLink`, the default) or a new
+  root linked to it (`LinkOnly`). See the README's "Trace correlation" section.
 - **The old `Shibuya.Adapter.Kafka.Tracing` module is gone.** It was deleted in
   `0.5.0.0`; `docs/otel-tracing.md` still describes it and is stale. Do not treat
   that document as evidence of a current capability.

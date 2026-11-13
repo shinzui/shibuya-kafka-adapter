@@ -148,6 +148,53 @@ and adds `messaging.system=kafka`, `messaging.kafka.destination.partition`, and
 attributes on its per-message span. The example above disables tracing with
 `runTracingNoop`; use the configured tracing interpreter to export spans.
 
+## Trace correlation
+
+When a record carries a W3C `traceparent` header, Shibuya opens a Consumer span
+named `process <processor>` around the handler and always adds a *link* to the
+producer's span. The `telemetry` field of `KafkaAdapterConfig` decides whether
+that span is also the producer's child:
+
+```haskell
+import Shibuya.Adapter.Kafka
+
+-- Default (ParentAndLink): the handler runs inside the producer's trace.
+config = defaultConfig [TopicName "orders"]
+
+-- LinkOnly: each record's processing starts its own trace, linked to the producer.
+replaying =
+  (defaultConfig [TopicName "orders"])
+    { telemetry = defaultAdapterTelemetry {traceCorrelation = LinkOnly}
+    }
+```
+
+`ParentAndLink` suits records consumed close to real time: producer and
+consumer appear in one connected trace. Choose `LinkOnly` when the producer's
+trace has usually ended before processing starts, so the consumer span would
+only stretch it:
+
+- replay from an old offset, or a reprocessing job over retained data;
+- sustained consumer lag;
+- many consumer groups on one topic, each of which would otherwise add its
+  processing to the same producer trace.
+
+A `LinkOnly` trace is sampled on its own, independently of the producer's
+sampling decision, and a tail-sampling collector sees it as a new trace. The
+link still lets a trace backend navigate to the producer.
+
+OpenTelemetry's messaging conventions allow creation-context parenting for a
+single message and recommend against it by default only when processing runs
+inside another span; Shibuya records its choice in its ADR 0014
+(`mori://shinzui/shibuya`, `docs/adr/0014-define-consumer-correlation-and-bounded-batch-link-accounting.md`;
+artifact URI pending). Without a usable `traceparent` neither setting adds a
+link, and the span keeps whatever span is active on the processing thread as
+its parent.
+
+Batch processors ignore the setting: a batch span is always a root with one
+link per record (the first 128 records with a valid context), each link
+carrying the record's `messaging.message.id`, and
+`messaging.batch.message_count` on the span.
+
 ## Development
 
 Enter the reproducible toolchain with `nix develop`, or run `direnv allow`.

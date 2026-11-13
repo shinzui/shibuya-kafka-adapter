@@ -114,6 +114,11 @@ module Shibuya.Adapter.Kafka
     -- * Defaults
     defaultConfig,
 
+    -- * Telemetry
+    AdapterTelemetry (traceCorrelation),
+    defaultAdapterTelemetry,
+    TraceCorrelation (..),
+
     -- * Re-exports
     TopicName (..),
     BrokerAddress (..),
@@ -137,7 +142,7 @@ import Kafka.Consumer.Types (ConsumerGroupId (..), OffsetCommit (..), RebalanceE
 import Kafka.Consumer.Types qualified as KC
 import Kafka.Effectful.Consumer.Effect (KafkaConsumer, commitAllOffsets, subscription)
 import Kafka.Types (BatchSize (..), BrokerAddress (..), KafkaError (..), Timeout (..), TopicName (..))
-import Shibuya.Adapter (Adapter (..))
+import Shibuya.Adapter (Adapter (..), AdapterTelemetry (traceCorrelation), TraceCorrelation (..), defaultAdapterTelemetry)
 import Shibuya.Adapter.Kafka.Config (KafkaAdapterConfig (..), defaultConfig)
 import Shibuya.Adapter.Kafka.Internal (KafkaAcknowledgementException (..), KafkaAdapterState (..), gateRecords, ingestedStream, kafkaSource, markPartitionsAssigned, markPartitionsRevoked, mkIngested, newKafkaAdapterState, withConsumerLock)
 import System.IO (hPutStrLn, stderr)
@@ -193,7 +198,8 @@ kafkaAdapterWith state config = do
           withConsumerLock state (commitAllOffsets OffsetCommit)
             `catchError` \_ err -> case err of
               KafkaResponseError RdKafkaRespErrNoOffset -> pure ()
-              _ -> throwError err
+              _ -> throwError err,
+        telemetry = config.telemetry
       }
 
 warnOnSubscriptionMismatch ::

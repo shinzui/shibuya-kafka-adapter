@@ -54,7 +54,7 @@ import Kafka.Types
     TopicName (..),
   )
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter)
+import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), defaultAdapterTelemetry, kafkaAdapter)
 import Shibuya.Core.Ack (AckDecision (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
@@ -207,7 +207,8 @@ consumeN env n ackDecision = do
             KafkaAdapterConfig
               { topics = [env.testTopic],
                 pollTimeout = Timeout 5000,
-                batchSize = BatchSize 100
+                batchSize = BatchSize 100,
+                telemetry = defaultAdapterTelemetry
               }
       Adapter {source} <- kafkaAdapter config
       Stream.fold Fold.drain

@@ -16,7 +16,7 @@ import Kafka.Consumer.Types (ConsumerRecord (..), Offset (..), RebalanceEvent (.
 import Kafka.ScriptedLog
 import Kafka.Types (BatchSize (..), KafkaError, PartitionId (..), Timeout (..))
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter, kafkaRebalanceHandler)
+import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), defaultAdapterTelemetry, kafkaAdapter, kafkaRebalanceHandler)
 import Shibuya.Adapter.Kafka.AckHandleTest hiding (tests)
 import Shibuya.Adapter.Kafka.Internal (KafkaAdapterState (..), Polled (..), gateRecords, kafkaSource, mkAckHandle, newKafkaAdapterState)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, defaultShutdownConfig, mkBatchProcessor, mkProcessor, runApp, stopApp, stopAppGracefully)
@@ -83,7 +83,7 @@ scriptedRetry retries = do
   queued <- newEmptyMVar
   outcome <- timeout 30000000 $
     runEff . runErrorNoCallStack @KafkaError . runScriptedConsumer scripted . runTracingNoop $ do
-      upstream <- kafkaAdapter KafkaAdapterConfig {topics = [scriptedTopic], pollTimeout = Timeout 5, batchSize = BatchSize 100}
+      upstream <- kafkaAdapter KafkaAdapterConfig {topics = [scriptedTopic], pollTimeout = Timeout 5, batchSize = BatchSize 100, telemetry = defaultAdapterTelemetry}
       let adapter = upstream {source = afterYields 12 queued upstream.source}
           handler Message {envelope} = do
             let offset = case envelope.cursor of
@@ -247,7 +247,7 @@ testBatchLiveness = do
   batches <- newIORef []
   outcome <- timeout 10000000 $
     runEff . runErrorNoCallStack @KafkaError . runScriptedConsumer scripted . runTracingNoop $ do
-      adapter <- kafkaAdapter KafkaAdapterConfig {topics = [scriptedTopic], pollTimeout = Timeout 5, batchSize = BatchSize 100}
+      adapter <- kafkaAdapter KafkaAdapterConfig {topics = [scriptedTopic], pollTimeout = Timeout 5, batchSize = BatchSize 100, telemetry = defaultAdapterTelemetry}
       let config = defaultBatchConfig {batchSize = 12, batchTimeout = 0.05, tickInterval = Just 0.01}
           handler info messages = do
             isFirst <- liftIO $ atomicModifyIORef' first (\x -> (False, x))

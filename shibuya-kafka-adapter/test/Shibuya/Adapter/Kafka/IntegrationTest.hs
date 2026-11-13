@@ -48,7 +48,7 @@ import Kafka.Types
     TopicName (..),
   )
 import Shibuya.Adapter (Adapter (..))
-import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
+import Shibuya.Adapter.Kafka (KafkaAdapterConfig (..), defaultAdapterTelemetry, kafkaAdapter, kafkaAdapterWith, kafkaRebalanceHandler, newKafkaAdapterState)
 import Shibuya.Adapter.Kafka.Internal (withConsumerLock)
 import Shibuya.Adapter.Kafka.SourceGateTest (afterYields, await, waitUntil)
 import Shibuya.App (ProcessorId (..), defaultAppConfig, defaultShutdownConfig, mkProcessor, runApp, stopApp, stopAppGracefully)
@@ -185,7 +185,8 @@ testGracefulShutdown = withTestEnv $ \env -> do
             KafkaAdapterConfig
               { topics = [env.testTopic],
                 pollTimeout = Timeout 5000,
-                batchSize = BatchSize 100
+                batchSize = BatchSize 100,
+                telemetry = defaultAdapterTelemetry
               }
       Adapter {source, shutdown} <- kafkaAdapter config
       Stream.fold Fold.drain
@@ -214,7 +215,8 @@ testIdleGracefulShutdown = withTestEnv $ \env -> do
             KafkaAdapterConfig
               { topics = [env.testTopic],
                 pollTimeout = Timeout 250,
-                batchSize = BatchSize 100
+                batchSize = BatchSize 100,
+                telemetry = defaultAdapterTelemetry
               }
       Adapter {source, shutdown} <- kafkaAdapter config
       shutdown
@@ -481,7 +483,8 @@ testConfig env =
   KafkaAdapterConfig
     { topics = [env.testTopic],
       pollTimeout = Timeout 500,
-      batchSize = BatchSize 100
+      batchSize = BatchSize 100,
+      telemetry = defaultAdapterTelemetry
     }
 
 countPayload :: ByteString -> [ByteString] -> Int
