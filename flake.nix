@@ -2,7 +2,7 @@
   description = "Shibuya adapter for kafka";
 
   # Every module-owned input is decided by the module's pins: the haskell-nix-dev,
-  # haskell-nix, and redpanda-container revisions below. Everything else `follows` them,
+  # haskell-nix, redpanda-container, nix2container, and okf revisions below. Everything else `follows` them,
   # so this project's flake.lock is a pure function of those revs — every project on
   # this nix-haskell-flake version locks to byte-identical pins and shares one store closure
   # instead of each re-resolving `master` on its own schedule.
@@ -12,7 +12,7 @@
   # project is a no-op here and only touches inputs you added yourself. Verify with
   # `git diff flake.lock` — it should come back empty.
   #
-  # seihou-managed: to move the toolchain or the shared patches, release a new
+  # seihou-managed: to move the toolchain, shared patches, or image builder, release a new
   # nix-haskell-flake version and `seihou update nix-haskell-flake`. Editing a rev here is a
   # conflict at the next run.
   inputs = {
@@ -22,13 +22,20 @@
     treefmt-nix.follows = "haskell-nix-dev/treefmt-nix";
     pre-commit-hooks.follows = "haskell-nix-dev/pre-commit-hooks";
 
+    # nix2container v1.1.0; available to unmanaged service image definitions.
+    # Always locked, with the same nixpkgs as the application and toolchain.
+    nix2container = {
+      url = "github:nlewo/nix2container/e503eb81630a0c5d7ec244e08e0733650235d8f1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Shared Haskell patch registry (mori://shinzui/haskell-nix), available to
     # ./flake.module.nix when project-specific package wiring needs it. Keeping every
     # module-owned input present makes the shipped lock exact for every feature combination;
     # unused inputs are locked but never built. Both follows keep the graph to one
     # haskell-nix-dev and nixpkgs.
     haskell-nix = {
-      url = "github:shinzui/haskell-nix/d13245db8a3e2c1c559185c0adf87285259b7ab2";
+      url = "github:shinzui/haskell-nix/dedd4d81589e99d97137eb36f88423c70c7d69f5";
       inputs.haskell-nix-dev.follows = "haskell-nix-dev";
       inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -38,8 +45,20 @@
     # defaults.nix are imported as files, so Apple-Silicon-only outputs are never
     # evaluated on Linux. Rev-pinned by the module; nixpkgs follows to keep one nixpkgs.
     redpanda-container = {
-      url = "github:shinzui/redpanda-container/c2ccecf589b93e3430b758165de7d2a2bb92f328";
+      url = "github:shinzui/redpanda-container/2107c2856a19e586a8c65d0280bb54f221678b6f";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # Released okf CLI (mori://shinzui/okf/packages/okf-cli 0.13.0.0) for validating
+    # and editing OKF documentation bundles; added to the dev shell only when nix.okf
+    # is enabled. Its toolchain, image and Redpanda inputs follow this flake's, so the
+    # CLI builds on the shared GHC/nixpkgs. Its haskell-nix stays its own node because
+    # okf carries a project-specific patch-registry override.
+    okf = {
+      url = "github:shinzui/okf/e0dd9e3047285caff6c4c4d9c6aee06e6ebb31b7";
+      inputs.haskell-nix-dev.follows = "haskell-nix-dev";
+      inputs.nix2container.follows = "nix2container";
+      inputs.redpanda-container.follows = "redpanda-container";
     };
   };
 

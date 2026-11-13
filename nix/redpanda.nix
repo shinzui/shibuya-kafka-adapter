@@ -23,8 +23,7 @@
 # attribute set (lib.optionalAttrs). Gating the attrset would make which options
 # this module defines depend on `pkgs` (= _module.args.pkgs, set by
 # flake.module.nix), which flake-parts resolves into an infinite recursion.
-# lib.optionals also short-circuits, so `localScripts` (which touches
-# pkgs.container, absent off-Darwin) is never forced on Linux.
+# lib.optionals also short-circuits, so `localScripts` is never forced on Linux.
 { inputs, lib, ... }:
 {
   perSystem = { pkgs, ... }:
@@ -32,9 +31,17 @@
       rc = inputs.redpanda-container;
 
       # Start from the flake's defaults (images, platform, container-side ports,
-      # broker uid/gid, timeouts, package = pkgs.container) and override only the
-      # bits that make this instance private and non-colliding.
+      # broker uid/gid, timeouts) and override only the bits that make this
+      # instance private and non-colliding.
       cfg = (import "${rc}/modules/home/defaults.nix" { inherit pkgs; }) // {
+        # Use the host's `container` from PATH, not this flake's pkgs.container.
+        # The CLI must be the same release as the running container-apiserver,
+        # which comes from the host install (the dotfiles overlay), while this
+        # project's nixpkgs ships an older one: a 1.1.0 client's `container start`
+        # against a 1.5.0 server hangs instead of failing. The scripts also
+        # compare the two versions and refuse to run on a mismatch.
+        package = null;
+
         network = "shibuya-kafka-adapter-rp";
         brokerName = "shibuya-kafka-adapter-rp-0";
         consoleName = "shibuya-kafka-adapter-rp-console";
