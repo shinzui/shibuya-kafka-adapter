@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.0.0 — Unreleased
+## 0.13.0.0 — 2026-11-14
 
 ### Breaking Changes
 
@@ -30,6 +30,9 @@
 - Add broker-free correlation tests over the scripted log, document the setting
   in the README, and let `otel-demo` select `LinkOnly` with
   `OTEL_DEMO_LINK_ONLY=true`.
+- Refresh the README usage and runtime guidance.
+- Update `nix-haskell-flake` to 0.40.0 so the `redpanda-local-*` scripts use
+  the host's container CLI.
 
 ## 0.12.0.0 — 2026-10-26
 
